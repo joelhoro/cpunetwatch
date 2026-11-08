@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gjs and gnome-shell tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gjs gnome-shell-common
+      - name: Lint
+        run: make lint
+      - name: Unit tests
+        run: |
+          set -e
+          for t in selftest nettest histtest; do
+            out=$(gjs -m src/$t.js 2>&1)
+            echo "$out" | tail -3
+            echo "$out" | grep -q "ALL TESTS PASSED" || { echo "FAILED: $t"; exit 1; }
+          done
+
+  release:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gjs gnome-shell-common
+      - run: make pack
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.shell-extension.zip
+          generate_release_notes: true

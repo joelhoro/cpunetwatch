@@ -1,0 +1,296 @@
+/* CPU Throttle Watch + Net Watch
+ *
+ * Palette tracks Adwaita so it sits naturally in the shell:
+ *   green #8ff0a4  yellow #f8e45c  orange #ffbe6f  red #ff7b63
+ *   blue  #99c1f1  dim    #9a9996
+ */
+
+/* ============================ panel ============================ */
+
+.cputhr-panel-label,
+.netw-panel-label {
+    font-feature-settings: "tnum";
+    font-size: 0.92em;
+    letter-spacing: 0.01em;
+    padding: 0 1px;
+}
+
+.cputhr-icon,
+.netw-icon {
+    icon-size: 15px;
+    padding-right: 5px;
+}
+
+/* Panel icon carries state by colour; plain inherits the bar's foreground. */
+.ico-plain { }
+.ico-info  { color: #99c1f1; }
+.ico-warn  { color: #f8e45c; }
+.ico-bad   { color: #ff7b63; }
+.ico-dim   { color: #77767b; }
+
+
+
+.cputhr-normal,
+.netw-normal { }
+
+.cputhr-info,
+.netw-info { color: #99c1f1; }
+
+.cputhr-warn,
+.netw-warn { color: #f8e45c; font-weight: bold; }
+
+.cputhr-unknown,
+.netw-unknown { color: #9a9996; }
+
+/* Latched fault: filled chip, alternating each poll so it pulses. */
+.cputhr-fault,
+.netw-fault {
+    color: #ffffff;
+    background-color: #c01c28;
+    font-weight: bold;
+    border-radius: 9px;
+    padding: 1px 8px;
+    border: 1px solid #f66151;
+}
+
+.cputhr-fault-alt,
+.netw-fault-alt {
+    color: #3d0f0f;
+    background-color: #f9f06b;
+    font-weight: bold;
+    border-radius: 9px;
+    padding: 1px 8px;
+    border: 1px solid #c01c28;
+}
+
+/* ============================ dropdown ============================ */
+
+/* ---- verdict banner ---- */
+
+.cputhr-verdict {
+    max-width: 26em;
+    font-weight: bold;
+    font-size: 1.02em;
+    padding: 2px 0;
+}
+
+.cputhr-verdict-ok   { color: #8ff0a4; }
+.cputhr-verdict-info { color: #99c1f1; }
+.cputhr-verdict-warn { color: #f8e45c; }
+
+.cputhr-verdict-fault {
+    color: #ffffff;
+    background-color: #c01c28;
+    border-radius: 7px;
+    padding: 7px 11px;
+    border: 1px solid #f66151;
+}
+
+/* ---- hero readout: the number you actually came to see ---- */
+
+.cputhr-hero {
+    font-size: 2.05em;
+    font-weight: 300;
+    font-feature-settings: "tnum";
+    color: #ffffff;
+}
+
+.cputhr-hero-unit {
+    font-size: 0.95em;
+    font-weight: 300;
+    color: #9a9996;
+    padding-left: 4px;
+}
+
+.cputhr-hero-sub {
+    font-size: 0.85em;
+    color: #9a9996;
+    font-feature-settings: "tnum";
+    padding-bottom: 3px;
+}
+
+.cputhr-hero-ok   { color: #ffffff; }
+.cputhr-hero-warn { color: #f8e45c; }
+.cputhr-hero-bad  { color: #ff7b63; }
+
+/* ---- headroom meter ---- */
+
+.cputhr-meter-track {
+    height: 5px;
+    background-color: rgba(255, 255, 255, 0.13);
+    border-radius: 3px;
+}
+
+.cputhr-meter-fill {
+    height: 5px;
+    border-radius: 3px;
+    background-color: #57e389;
+}
+
+.cputhr-meter-fill-warn { background-color: #f8e45c; }
+.cputhr-meter-fill-bad  { background-color: #ff7b63; }
+
+.cputhr-meter-caption {
+    font-size: 0.76em;
+    color: #77767b;
+    font-feature-settings: "tnum";
+    padding-top: 4px;
+}
+
+/* ---- section label ---- */
+
+.cputhr-section {
+    font-size: 0.72em;
+    font-weight: bold;
+    letter-spacing: 0.11em;
+    color: #77767b;
+    padding: 2px 0 1px 0;
+}
+
+/* ---- key/value rows ---- */
+
+.cputhr-row-key { color: #deddda; }
+
+.cputhr-row-value {
+    font-feature-settings: "tnum";
+    color: #9a9996;
+    padding-left: 2em;
+}
+
+.cputhr-value-good { color: #8ff0a4; }
+.cputhr-value-warn { color: #f8e45c; font-weight: bold; }
+.cputhr-value-bad  { color: #ff7b63; font-weight: bold; }
+
+/* All-clear summary that replaces eight rows of "no". */
+.cputhr-allclear {
+    color: #8ff0a4;
+    font-size: 0.92em;
+    padding: 1px 0;
+}
+
+.cputhr-footnote {
+    font-size: 0.78em;
+    color: #5e5c64;
+    padding-top: 2px;
+}
+
+
+/* ======================= webapp-style chrome ======================= */
+
+/* Leading emoji glyph column -- fixed width so rows align. */
+.cputhr-glyph {
+    width: 22px;
+    font-size: 0.95em;
+    padding-right: 6px;
+}
+
+/* Status pills: tinted rounded badges instead of bare coloured text. */
+.pill {
+    border-radius: 10px;
+    padding: 2px 10px;
+    font-size: 0.82em;
+    font-weight: bold;
+    font-feature-settings: "tnum";
+}
+
+.pill-good {
+    background-color: rgba(87, 227, 137, 0.17);
+    color: #8ff0a4;
+    border: 1px solid rgba(87, 227, 137, 0.30);
+}
+
+.pill-warn {
+    background-color: rgba(248, 228, 92, 0.17);
+    color: #f8e45c;
+    border: 1px solid rgba(248, 228, 92, 0.32);
+}
+
+.pill-bad {
+    background-color: rgba(255, 123, 99, 0.20);
+    color: #ff7b63;
+    border: 1px solid rgba(255, 123, 99, 0.38);
+}
+
+.pill-dim {
+    background-color: rgba(255, 255, 255, 0.07);
+    color: #9a9996;
+    border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+/* Verdict banner gets a big leading glyph. */
+.cputhr-verdict-glyph {
+    font-size: 1.45em;
+    padding-right: 9px;
+}
+
+/* Hero block: emoji badge beside the big number. */
+.cputhr-hero-badge {
+    font-size: 1.7em;
+    padding-right: 12px;
+}
+
+/* All-clear line, pill-ish. */
+.cputhr-allclear {
+    color: #8ff0a4;
+    font-size: 0.92em;
+    padding: 1px 0;
+}
+
+/* ========================= history graph ========================= */
+
+.cnw-tabs {
+    padding: 2px 0 7px 0;
+    spacing: 4px;
+}
+
+.cnw-tab {
+    font-size: 0.74em;
+    font-weight: bold;
+    letter-spacing: 0.04em;
+    color: #9a9996;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 2px 9px;
+    margin-right: 4px;
+}
+
+.cnw-tab:hover {
+    background-color: rgba(255, 255, 255, 0.13);
+    color: #ffffff;
+}
+
+.cnw-tab:focus {
+    border: 1px solid rgba(153, 193, 241, 0.7);
+}
+
+.cnw-tab-active {
+    background-color: rgba(153, 193, 241, 0.22);
+    border: 1px solid rgba(153, 193, 241, 0.45);
+    color: #ffffff;
+}
+
+.cnw-graph {
+    min-width: 272px;
+    background-color: rgba(0, 0, 0, 0.22);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.cnw-axis-col {
+    padding: 1px 0 1px 7px;
+    min-width: 34px;
+}
+
+.cnw-axis {
+    font-size: 0.68em;
+    color: #77767b;
+    font-feature-settings: "tnum";
+}
+
+.cnw-graph-caption {
+    font-size: 0.74em;
+    color: #77767b;
+    font-feature-settings: "tnum";
+    padding-top: 6px;
+}

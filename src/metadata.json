@@ -1,0 +1,16 @@
+{
+  "uuid": "cpunetwatch@joelhoro.github.io",
+  "name": "CPU & Net Watch",
+  "description": "Real CPU clock and layered network health in the top bar, with history graphs from 5 minutes to 7 days. Flags a latched PROCHOT fault distinctly from normal thermal protection.",
+  "shell-version": [
+    "45",
+    "46",
+    "47",
+    "48"
+  ],
+  "version-name": "1.0.0",
+  "session-modes": [
+    "user"
+  ],
+  "url": "https://github.com/joelhoro/cpunetwatch"
+}
