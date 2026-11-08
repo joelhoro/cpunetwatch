@@ -21,10 +21,19 @@ lint:
 	@for f in $(SRC)/*.js; do node --check $$f || exit 1; done
 	@echo "all JS parses"
 
+# gnome-extensions ships with gnome-shell, which CI runners lack. The bundle
+# is just a flat zip of the runtime files, so fall back to zip(1) there.
 pack: lint
 	@mkdir -p $(DIST)
-	@gnome-extensions pack $(SRC) --force -o $(DIST) \
-	  $(foreach f,$(EXTRA),--extra-source=$(f))
+	@rm -f $(DIST)/$(UUID).shell-extension.zip
+	@if command -v gnome-extensions >/dev/null 2>&1; then \
+	  gnome-extensions pack $(SRC) --force -o $(DIST) \
+	    $(foreach f,$(EXTRA),--extra-source=$(f)); \
+	else \
+	  echo "gnome-extensions absent; packing with zip"; \
+	  (cd $(SRC) && zip -q -X ../$(DIST)/$(UUID).shell-extension.zip \
+	     extension.js metadata.json stylesheet.css $(EXTRA)); \
+	fi
 	@ls -lh $(DIST)/$(UUID).shell-extension.zip
 
 install: pack
