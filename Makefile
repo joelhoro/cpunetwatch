@@ -9,7 +9,7 @@ INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 all: pack
 
 test:
-	@for t in selftest nettest histtest; do \
+	@for t in selftest nettest histtest drawtest; do \
 	  printf '%-10s ' $$t; \
 	  gjs -m $(SRC)/$$t.js 2>&1 | tail -1; \
 	done
