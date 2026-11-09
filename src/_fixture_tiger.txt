@@ -1,0 +1,49 @@
+step-studio-web-1	Up 4 hours (healthy)
+deal-flow-crm-web-1	Up 4 hours (healthy)
+deal-flow-crm-auth-1	Up 4 hours (healthy)
+deal-flow-crm-branches-router-1	Up 5 hours (healthy)
+deal-flow-crm-branches-auth-1	Up 5 hours (healthy)
+portfolio-web-1	Up 2 days (healthy)
+nutrition-br-app-walkthrough-web	Up 3 days (healthy)
+nutrition-br-app-walkthrough-api	Up 3 days (healthy)
+nutrition-previews-minio	Up 4 days (healthy)
+nutrition-branches-router-1	Up 4 days (healthy)
+nutrition-previews-mailpit	Up 4 days (healthy)
+nutrition-api-1	Up 4 days (healthy)
+nutrition-scheduler-1	Up 4 days
+nutrition-web-1	Up 2 weeks (healthy)
+scrapbook-web-1	Up 2 weeks (healthy)
+scrapbook-api-1	Up 2 weeks (healthy)
+nutrition-minio-1	Up 2 weeks (healthy)
+nutrition-mailpit-1	Up 2 weeks (healthy)
+newport-web-1	Up 2 weeks
+newport-api-1	Up 2 weeks (healthy)
+bettyspainting-web-1	Up 2 weeks (healthy)
+boardpackage-frontend-1	Up 2 weeks
+boardpackage-worker-1	Up 2 weeks
+boardpackage-backend-1	Up 2 weeks (healthy)
+boardpackage-minio-1	Up 2 weeks (healthy)
+boardpackage-postgres-1	Up 2 weeks (healthy)
+boardpackage-redis-1	Up 2 weeks (healthy)
+deckbuilder-dev	Up 2 weeks
+deckbuilder-prod	Up 2 weeks
+grafana	Up 2 weeks
+promtail	Up 2 weeks
+prometheus	Up 2 weeks
+node-exporter	Up 2 weeks
+loki	Up 2 weeks
+registry	Up 2 weeks
+speedtest-tracker	Up 2 weeks
+docker-kiosk-1	Up 2 weeks (healthy)
+docker-kiosk-2	Up 2 weeks (healthy)
+docker-kiosk-3	Up 2 weeks (healthy)
+portainer	Up 2 weeks
+===CNW===
+32
+===CNW===
+/dev/nvme0n1p5  1006800648 648343556 307240708      68% /
+===CNW===
+Images	81.7GB	41.21GB (50%)
+Containers	1.067GB	980.6MB (91%)
+Local Volumes	17.49GB	2.193GB (12%)
+Build Cache	115.7GB	44.09GB

@@ -27,6 +27,9 @@ import {
     haveLink, formatMs,
 } from './net.js';
 import {Series, RANGES, loadSeries, saveSeries} from './history.js';
+import {
+    TIGER_STATE, remoteCommand, parseReport, classifyTiger, previewUrl,
+} from './tiger.js';
 import {Graph} from './graph.js';
 
 const POLL_SECONDS = 2;
@@ -37,6 +40,9 @@ const NET_PANEL_ICON = 'globe-symbolic';
 const SAVE_SECONDS = 60;
 const FLAG_FAULT = 1;
 const BD_STATE_FILE = '/run/cpunetwatch-bdprochot';
+const TIGER_HOST = 'tiger';
+const TIGER_POLL_SECONDS = 60;
+const TIGER_PANEL_ICON = 'network-server-symbolic';
 const DNS_PROBE_HOST = 'cloudflare.com';
 const INTERNET_PROBE = '1.1.1.1';
 
@@ -966,6 +972,280 @@ class NetIndicator extends PanelMenu.Button {
     }
 });
 
+/* ------------------------------------------------------------------ *
+ * Tiger (remote host) indicator
+ * ------------------------------------------------------------------ */
+
+const TIGER_EMOJI = {
+    [TIGER_STATE.OK]:          '✅',
+    [TIGER_STATE.WARN]:        '🧹',
+    [TIGER_STATE.CRITICAL]:    '🚨',
+    [TIGER_STATE.UNREACHABLE]: '🔌',
+    [TIGER_STATE.UNKNOWN]:     '🔎',
+};
+
+const TIGER_STYLE = {
+    [TIGER_STATE.OK]:          {cls: 'netw-normal',  iconCls: 'ico-plain'},
+    [TIGER_STATE.WARN]:        {cls: 'netw-warn',    iconCls: 'ico-warn'},
+    [TIGER_STATE.CRITICAL]:    {cls: 'netw-fault',   iconCls: 'ico-bad'},
+    [TIGER_STATE.UNREACHABLE]: {cls: 'netw-unknown', iconCls: 'ico-dim'},
+    [TIGER_STATE.UNKNOWN]:     {cls: 'netw-unknown', iconCls: 'ico-dim'},
+};
+
+const TigerIndicator = GObject.registerClass(
+class TigerIndicator extends PanelMenu.Button {
+    _init() {
+        super._init(0.5, 'Tiger Watch', false);
+
+        this._cancellable = new Gio.Cancellable();
+        this._proc = null;
+        this._busy = false;
+        this._blink = false;
+        this._notified = false;
+        this._series = loadSeries('tiger.json');
+
+        const p = buildPanelBox('netw-panel-label', 'netw-icon', TIGER_PANEL_ICON);
+        this._icon = p.icon;
+        this._label = p.label;
+        this._labelCls = new ClassSwapper(p.label);
+        this._iconCls = new ClassSwapper(p.icon);
+        this.add_child(p.box);
+
+        this._verdictGlyph = new St.Label({
+            text: '', style_class: 'cputhr-verdict-glyph',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._verdict = new St.Label({
+            text: 'Contacting tiger…', style_class: 'cputhr-verdict',
+        });
+        this._verdict.clutter_text.line_wrap = true;
+        this._verdict.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        this._verdict.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._verdictCls = new ClassSwapper(this._verdict);
+
+        const vi = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        vi.add_child(this._verdictGlyph);
+        vi.add_child(this._verdict);
+        this.menu.addMenuItem(vi);
+
+        this._hero = new HeroReadout('%');
+        this.menu.addMenuItem(this._hero);
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._graphSection = new GraphSection('%', [0.95, 0.70, 0.44],
+            v => `${v.toFixed(0)}`, {floorZero: true});
+        this._graphSection.attach(this._series, [0, 100]);
+        this.menu.addMenuItem(this._graphSection);
+        this.menu.connect('open-state-changed', (m, open) => {
+            if (open)
+                this._graphSection.refresh();
+        });
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(sectionLabel('Host'));
+        this._rowRunning = new DetailRow('Containers running', '🔗');
+        this._rowBad = new DetailRow('Needing attention', '🚨');
+        this._rowExited = new DetailRow('Stopped, not removed', '🔌');
+        this._rowReclaim = new DetailRow('Reclaimable', '🧹');
+        this.menu.addMenuItem(this._rowRunning);
+        this.menu.addMenuItem(this._rowBad);
+        this.menu.addMenuItem(this._rowExited);
+        this.menu.addMenuItem(this._rowReclaim);
+
+        this._previewLabel = sectionLabel('Branch previews');
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(this._previewLabel);
+        this._previewItems = [];
+
+        this._poll();
+        this._timeoutId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, TIGER_POLL_SECONDS, () => {
+                this._poll();
+                return GLib.SOURCE_CONTINUE;
+            });
+        this._saveId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_LOW, SAVE_SECONDS, () => {
+                if (this._series.dirty)
+                    saveSeries('tiger.json', this._series);
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _poll() {
+        if (this._busy)
+            return;
+        this._busy = true;
+        let proc;
+        try {
+            proc = Gio.Subprocess.new(
+                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+                    TIGER_HOST, remoteCommand()],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+        } catch {
+            this._busy = false;
+            this._render(null, false);
+            return;
+        }
+        this._proc = proc;
+        proc.communicate_utf8_async(null, this._cancellable, (p, res) => {
+            this._busy = false;
+            this._proc = null;
+            let out = '';
+            try {
+                [, out] = p.communicate_utf8_finish(res);
+            } catch {
+                if (!this._cancellable.is_cancelled())
+                    this._render(null, false);
+                return;
+            }
+            if (this._cancellable.is_cancelled())
+                return;
+            const okExit = p.get_exit_status() === 0;
+            this._render(okExit ? parseReport(out) : null, okExit);
+        });
+    }
+
+    _render(report, reachable) {
+        const {state, verdict} = classifyTiger(report, reachable);
+        const style = TIGER_STYLE[state] ?? TIGER_STYLE[TIGER_STATE.UNKNOWN];
+        const pct = report?.disk?.pct ?? null;
+
+        if (pct !== null)
+            this._series.push(Date.now(), pct,
+                state === TIGER_STATE.CRITICAL ? FLAG_FAULT : 0);
+
+        this._label.text = pct !== null ? `${pct}%`
+            : state === TIGER_STATE.UNREACHABLE ? 'offline' : '--';
+
+        let cls = style.cls;
+        const bad = state === TIGER_STATE.CRITICAL;
+        if (bad) {
+            this._blink = !this._blink;
+            if (this._blink)
+                cls = 'netw-fault-alt';
+        } else {
+            this._blink = false;
+        }
+        this._labelCls.set(cls);
+        this._iconCls.set(style.iconCls);
+
+        this._verdict.text = verdict;
+        this._verdictGlyph.text = TIGER_EMOJI[state] ?? '';
+        this._verdictCls.set(
+            bad ? 'cputhr-verdict-fault'
+                : state === TIGER_STATE.WARN ? 'cputhr-verdict-warn'
+                    : state === TIGER_STATE.OK ? 'cputhr-verdict-ok'
+                        : 'cputhr-verdict-warn');
+
+        this._hero.setBadge(TIGER_EMOJI[state] ?? '');
+        if (pct !== null) {
+            this._hero.setNumber(String(pct),
+                pct >= 90 ? 'cputhr-hero-bad'
+                    : pct >= 80 ? 'cputhr-hero-warn' : 'cputhr-hero-ok');
+            this._hero.setUnit('% disk');
+            this._hero.setSub(
+                `${report.disk.usedGb.toFixed(0)} of ${report.disk.totalGb.toFixed(0)} GB on ${TIGER_HOST}`);
+            this._hero.setFill(pct / 100,
+                pct >= 90 ? 'cputhr-meter-fill-bad'
+                    : pct >= 80 ? 'cputhr-meter-fill-warn' : null);
+            this._hero.setCaption(
+                `${report.reclaimableGb.toFixed(0)} GB reclaimable by pruning`);
+        } else {
+            this._hero.setNumber('--', 'cputhr-hero-bad');
+            this._hero.setUnit('');
+            this._hero.setSub(`no answer from ${TIGER_HOST}`);
+            this._hero.setFill(0, 'cputhr-meter-fill-bad');
+            this._hero.setCaption('');
+        }
+
+        if (report) {
+            const nbad = report.unhealthy.length + report.restarting.length;
+            this._rowRunning.setValue(String(report.running), 'good');
+            this._rowBad.setValue(String(nbad), nbad ? 'bad' : 'good');
+            this._rowExited.setValue(
+                report.exited === null ? '--' : String(report.exited),
+                (report.exited ?? 0) >= 20 ? 'warn' : 'dim');
+            this._rowReclaim.setValue(`${report.reclaimableGb.toFixed(0)} GB`,
+                report.reclaimableGb >= 40 ? 'warn' : 'dim');
+            this._syncPreviews(report.previews);
+        } else {
+            for (const r of [this._rowRunning, this._rowBad, this._rowExited,
+                this._rowReclaim])
+                r.setValue('--', 'dim');
+            this._syncPreviews([]);
+        }
+
+        if (bad) {
+            if (!this._notified) {
+                this._notified = true;
+                Main.notifyError(`${TIGER_HOST}: containers need attention`, verdict);
+            }
+        } else if (state === TIGER_STATE.OK) {
+            this._notified = false;
+        }
+    }
+
+    /** Rebuild the clickable preview list; URLs open in the browser. */
+    _syncPreviews(previews) {
+        for (const it of this._previewItems)
+            it.destroy();
+        this._previewItems = [];
+
+        const seen = new Set();
+        for (const c of previews) {
+            const url = previewUrl(c.name);
+            if (!url || seen.has(url))
+                continue;
+            seen.add(url);
+            const item = new PopupMenu.PopupBaseMenuItem();
+            item.add_child(new St.Label({
+                text: '\u{1f310}', style_class: 'cputhr-glyph',
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+            item.add_child(new St.Label({
+                text: url.replace(/^https:\/\//, ''),
+                style_class: 'cputhr-row-key',
+                x_expand: true,
+                y_align: Clutter.ActorAlign.CENTER,
+            }));
+            item.connect('activate', () => {
+                try {
+                    Gio.AppInfo.launch_default_for_uri(url, null);
+                } catch (e) {
+                    Main.notifyError('Could not open', String(e));
+                }
+            });
+            this.menu.addMenuItem(item);
+            this._previewItems.push(item);
+        }
+        this._previewLabel.visible = this._previewItems.length > 0;
+        if (!this._previewItems.length) {
+            const none = new PopupMenu.PopupBaseMenuItem({
+                reactive: false, can_focus: false,
+            });
+            none.add_child(new St.Label({
+                text: 'none running', style_class: 'cputhr-footnote', x_expand: true,
+            }));
+            this.menu.addMenuItem(none);
+            this._previewItems.push(none);
+            this._previewLabel.visible = true;
+        }
+    }
+
+    destroy() {
+        for (const id of ['_timeoutId', '_saveId']) {
+            if (this[id]) {
+                GLib.Source.remove(this[id]);
+                this[id] = null;
+            }
+        }
+        saveSeries('tiger.json', this._series);
+        this._cancellable.cancel();
+        try { this._proc?.force_exit(); } catch { /* already gone */ }
+        super.destroy();
+    }
+});
+
 /* ------------------------------------------------------------------ */
 
 export default class CpuThrottleWatchExtension extends Extension {
@@ -974,6 +1254,8 @@ export default class CpuThrottleWatchExtension extends Extension {
         Main.panel.addToStatusArea(`${this.uuid}-cpu`, this._cpu, 0, 'right');
         this._net = new NetIndicator();
         Main.panel.addToStatusArea(`${this.uuid}-net`, this._net, 1, 'right');
+        this._tiger = new TigerIndicator();
+        Main.panel.addToStatusArea(`${this.uuid}-tiger`, this._tiger, 2, 'right');
     }
 
     disable() {
@@ -981,5 +1263,7 @@ export default class CpuThrottleWatchExtension extends Extension {
         this._cpu = null;
         this._net?.destroy();
         this._net = null;
+        this._tiger?.destroy();
+        this._tiger = null;
     }
 }

@@ -1,7 +1,7 @@
 UUID    = cpunetwatch@joelhoro.github.io
 SRC     = src
 DIST    = dist
-EXTRA   = sensors.js net.js history.js draw.js graph.js prochot
+EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js prochot
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
 .PHONY: all test pack install uninstall preview clean lint
@@ -9,7 +9,7 @@ INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 all: pack
 
 test:
-	@for t in selftest nettest histtest drawtest; do \
+	@for t in selftest nettest histtest drawtest tigertest; do \
 	  printf '%-10s ' $$t; \
 	  gjs -m $(SRC)/$$t.js 2>&1 | tail -1; \
 	done

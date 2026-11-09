@@ -20,7 +20,7 @@ jobs:
       - name: Unit tests
         run: |
           set -e
-          for t in selftest nettest histtest drawtest; do
+          for t in selftest nettest histtest drawtest tigertest; do
             out=$(gjs -m src/$t.js 2>&1)
             echo "$out" | tail -3
             echo "$out" | grep -q "ALL TESTS PASSED" || { echo "FAILED: $t"; exit 1; }

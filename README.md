@@ -156,3 +156,24 @@ them testable outside a running session:
 ## Licence
 
 GPL-2.0-or-later.
+
+## Tiger Watch
+
+A third indicator for a remote host reached over ssh (`TIGER_HOST`, default
+`tiger`). One round trip every 60 s collects container health, disk, and
+`docker system df`.
+
+| State | | Meaning |
+|---|---|---|
+| Healthy | ✅ | All containers up, disk and cruft within bounds |
+| Housekeeping | 🧹 | Disk ≥80%, ≥40 GB reclaimable, or ≥20 stopped containers |
+| Critical | 🚨 | A container is unhealthy or restarting, or disk ≥90% |
+| Offline | 🔌 | ssh did not answer |
+
+The panel shows disk percent. The menu gives container counts, how much
+`docker system prune` would reclaim, a 7-day disk graph — which is the point,
+since a slow leak from accumulating images is invisible in any single `df` —
+and your live branch previews as clickable URLs.
+
+Requires passphrase-free key auth to the host, since gnome-shell runs `ssh`
+with `BatchMode=yes`.
