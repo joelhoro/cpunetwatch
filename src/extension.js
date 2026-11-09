@@ -36,6 +36,7 @@ const CPU_PANEL_ICON = 'computer-chip-symbolic';
 const NET_PANEL_ICON = 'globe-symbolic';
 const SAVE_SECONDS = 60;
 const FLAG_FAULT = 1;
+const BD_STATE_FILE = '/run/cpunetwatch-bdprochot';
 const DNS_PROBE_HOST = 'cloudflare.com';
 const INTERNET_PROBE = '1.1.1.1';
 
@@ -287,6 +288,44 @@ class GraphSection extends PopupMenu.PopupBaseMenuItem {
     }
 });
 
+/**
+ * Row with a label and a button. The button escalates via pkexec, which
+ * gnome-shell's own polkit agent prompts for -- the shell itself never
+ * touches the MSR.
+ */
+const ActionRow = GObject.registerClass(
+class ActionRow extends PopupMenu.PopupBaseMenuItem {
+    _init(glyph, keyText) {
+        super._init({reactive: false, can_focus: false, activate: false});
+        this.add_child(new St.Label({
+            text: glyph, style_class: 'cputhr-glyph',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        this._key = new St.Label({
+            text: keyText, style_class: 'cputhr-row-key',
+            x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+        });
+        this.add_child(this._key);
+        this._button = new St.Button({
+            label: '--', style_class: 'cnw-action', can_focus: true,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this.add_child(this._button);
+        this._btnCls = new ClassSwapper(this._button);
+    }
+
+    setKey(t) { this._key.text = t; }
+
+    setButton(label, cls, sensitive = true) {
+        this._button.label = label;
+        this._button.reactive = sensitive;
+        this._button.can_focus = sensitive;
+        this._btnCls.set(cls);
+    }
+
+    onClick(fn) { this._button.connect('clicked', fn); }
+});
+
 /** Shared panel box: identity icon + label. The icon carries state by colour. */
 function buildPanelBox(labelClass, iconClass, iconName) {
     const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
@@ -367,8 +406,10 @@ const REASON_TITLES = {
 
 const ThrottleIndicator = GObject.registerClass(
 class ThrottleIndicator extends PanelMenu.Button {
-    _init() {
+    _init(extPath) {
         super._init(0.5, 'CPU Throttle Watch', false);
+
+        this._extPath = extPath;
 
         this._paths = new SensorPaths();
         this._series = loadSeries('cpu.json');
@@ -413,8 +454,10 @@ class ThrottleIndicator extends PanelMenu.Button {
         this._graphSection.attach(this._series, null);
         this.menu.addMenuItem(this._graphSection);
         this.menu.connect('open-state-changed', (m, open) => {
-            if (open)
+            if (open) {
                 this._graphSection.refresh();
+                this._refreshBd();
+            }
         });
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
@@ -437,6 +480,14 @@ class ThrottleIndicator extends PanelMenu.Button {
             this._reasonRows.set(r, row);
             this.menu.addMenuItem(row);
         }
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(sectionLabel('External throttle (BD PROCHOT)'));
+        this._rowBd = new ActionRow('🛡', 'Respond to EC throttle');
+        this._rowBd.onClick(() => this._toggleBd());
+        this.menu.addMenuItem(this._rowBd);
+        this._bdBusy = false;
+        this._refreshBd();
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.menu.addMenuItem(sectionLabel('Detail'));
@@ -571,6 +622,75 @@ class ThrottleIndicator extends PanelMenu.Button {
         } else if (state === STATE.NORMAL) {
             this._notifiedFault = false;
         }
+    }
+
+    /** Reads the world-readable state file the helper publishes. */
+    _bdState() {
+        try {
+            const [ok, bytes] = GLib.file_get_contents(BD_STATE_FILE);
+            if (!ok)
+                return null;
+            const t = new TextDecoder().decode(bytes).trim();
+            return t === 'enabled' || t === 'disabled' ? t : null;
+        } catch {
+            return null;
+        }
+    }
+
+    _refreshBd() {
+        if (this._bdBusy) {
+            this._rowBd.setButton('working…', 'cnw-action-busy', false);
+            return;
+        }
+        const st = this._bdState();
+        if (st === 'disabled') {
+            this._rowBd.setKey('EC throttle ignored');
+            this._rowBd.setButton('Restore', 'cnw-action-warn');
+        } else if (st === 'enabled') {
+            this._rowBd.setKey('Respond to EC throttle');
+            this._rowBd.setButton('Release', 'cnw-action');
+        } else {
+            this._rowBd.setKey('Respond to EC throttle');
+            this._rowBd.setButton('Check', 'cnw-action');
+        }
+    }
+
+    _toggleBd() {
+        if (this._bdBusy)
+            return;
+        const st = this._bdState();
+        const verb = st === 'disabled' ? 'on' : st === 'enabled' ? 'off' : 'status';
+        const script = GLib.build_filenamev([this._extPath, 'prochot']);
+
+        this._bdBusy = true;
+        this._refreshBd();
+        this.menu.close();
+
+        let proc;
+        try {
+            proc = Gio.Subprocess.new(['pkexec', script, verb],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+        } catch (e) {
+            this._bdBusy = false;
+            this._refreshBd();
+            Main.notifyError('Could not run the helper', String(e));
+            return;
+        }
+
+        proc.communicate_utf8_async(null, null, (p, res) => {
+            this._bdBusy = false;
+            let out = '', err = '';
+            try {
+                [, out, err] = p.communicate_utf8_finish(res);
+            } catch (e) {
+                err = String(e);
+            }
+            const code = p.get_exit_status();
+            // 126/127 are pkexec's "dismissed" and "not authorised".
+            if (code !== 0 && code !== 126 && code !== 127)
+                Main.notifyError('BD PROCHOT change failed', (err || out).trim());
+            this._refreshBd();
+        });
     }
 
     destroy() {
@@ -850,7 +970,7 @@ class NetIndicator extends PanelMenu.Button {
 
 export default class CpuThrottleWatchExtension extends Extension {
     enable() {
-        this._cpu = new ThrottleIndicator();
+        this._cpu = new ThrottleIndicator(this.path);
         Main.panel.addToStatusArea(`${this.uuid}-cpu`, this._cpu, 0, 'right');
         this._net = new NetIndicator();
         Main.panel.addToStatusArea(`${this.uuid}-net`, this._net, 1, 'right');

@@ -1,7 +1,7 @@
 UUID    = cpunetwatch@joelhoro.github.io
 SRC     = src
 DIST    = dist
-EXTRA   = sensors.js net.js history.js draw.js graph.js
+EXTRA   = sensors.js net.js history.js draw.js graph.js prochot
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
 .PHONY: all test pack install uninstall preview clean lint

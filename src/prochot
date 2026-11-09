@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# prochot -- inspect and toggle BD PROCHOT (bidirectional PROCHOT).
+#
+# MSR_POWER_CTL (0x1FC) bit 0 enables the CPU's response to the PROCHOT pin
+# being asserted externally, i.e. by the embedded controller. Clearing it
+# makes the CPU ignore that pin -- which instantly undoes a *latched* PROCHOT
+# without a reboot.
+#
+# What this does NOT disable: the CPU's own die-temperature protection (TCC),
+# the thermal trip, and the PL1/PL2/PL4 power limits. Those are separate
+# mechanisms and remain fully active.
+#
+# What it DOES disable: the embedded controller's ability to force a throttle
+# for reasons the CPU cannot see -- VRM temperature, battery current limits,
+# chassis skin temperature. Turn it off to escape a stuck assertion; turn it
+# back on once the machine is healthy.
+#
+# The setting is volatile: it does not survive a reboot, which is deliberate.
+
+set -euo pipefail
+
+MSR=0x1FC
+BIT=0
+TEMP_GUARD=85
+STATE_FILE=/run/cpunetwatch-bdprochot
+
+die() { printf 'prochot: %s\n' "$1" >&2; exit 1; }
+
+need_root() {
+    [[ $EUID -eq 0 ]] || die "must run as root (try: sudo $0 $*)"
+}
+
+ensure_msr() {
+    command -v rdmsr >/dev/null || die "msr-tools not installed (apt install msr-tools)"
+    [[ -e /dev/cpu/0/msr ]] || modprobe msr 2>/dev/null || die "cannot load the msr module"
+    local ld=/sys/kernel/security/lockdown
+    if [[ -r $ld ]] && ! grep -q '\[none\]' "$ld"; then
+        die "kernel lockdown is active; MSR writes are blocked"
+    fi
+}
+
+publish_state() {
+    # Best-effort: the panel indicator reads this to show the current setting.
+    [[ $EUID -eq 0 ]] || return 0
+    printf '%s\n' "$1" > "$STATE_FILE" 2>/dev/null || return 0
+    chmod 0644 "$STATE_FILE" 2>/dev/null || true
+}
+
+hottest() {
+    local m=0 v
+    for f in /sys/class/hwmon/hwmon*/temp1_input; do
+        [[ -r $f ]] || continue
+        v=$(<"$f"); (( v > m )) && m=$v
+    done
+    echo $(( m / 1000 ))
+}
+
+max_mhz() {
+    cat /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null \
+        | sort -rn | head -1 | awk '{print int($1/1000)}'
+}
+
+asserted() {
+    cat /sys/class/drm/card*/gt/gt0/throttle_reason_prochot 2>/dev/null | head -1
+}
+
+raw_msr() {
+    local v; v=$(rdmsr -c $MSR 2>/dev/null) || return 1
+    [[ $v =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+    echo "$v"
+}
+
+bd_state() {
+    local raw; raw=$(raw_msr) || return 1
+    (( ( raw >> BIT ) & 1 )) && echo enabled || echo disabled
+}
+
+# wrmsr parses its value as HEXADECIMAL. Passing bash's decimal arithmetic
+# result silently writes a completely different register value, so always
+# format with %x -- and verify the write actually landed, because wrmsr can
+# exit 0 while the CPU rejects or ignores the store.
+set_bit() {
+    local want=$1 raw new
+    raw=$(raw_msr) || die "cannot read MSR $MSR"
+    if [[ $want == 1 ]]; then
+        new=$(( raw | (1 << BIT) ))
+    else
+        new=$(( raw & ~(1 << BIT) ))
+    fi
+    printf '  %-22s %s\n' "before:" "$raw"
+    printf '  %-22s %s\n' "writing:" "$(printf '0x%x' "$new")"
+    wrmsr -a $MSR "$(printf '0x%x' "$new")" \
+        || die "wrmsr failed -- the CPU rejected the write"
+
+    local after; after=$(raw_msr) || die "cannot re-read MSR $MSR"
+    printf '  %-22s %s\n' "after:" "$after"
+    if (( ( (after >> BIT) & 1 ) != want )); then
+        die "write did not stick: bit $BIT is still $(( (after >> BIT) & 1 )).
+       This MSR is likely locked by firmware on this machine, so BD PROCHOT
+       cannot be toggled here. Fall back to a reboot."
+    fi
+}
+
+cmd_status() {
+    need_root status; ensure_msr
+    local st; st=$(bd_state) || die "cannot read MSR $MSR"
+    publish_state "$st"
+    printf '  MSR %s raw value        : %s\n' "$MSR" "$(raw_msr)"
+    printf '  BD PROCHOT (bit %d)          : %s\n' "$BIT" "$st"
+    printf '  PROCHOT currently asserted : %s\n' "$(asserted)"
+    printf '  fastest core               : %s MHz\n' "$(max_mhz)"
+    printf '  hottest sensor             : %s C\n' "$(hottest)"
+    echo
+    if [[ $st == enabled && $(asserted) == 1 && $(hottest) -lt 70 ]]; then
+        echo "  Asserted while cool -- this looks like a latched fault."
+        echo "  'sudo $0 off' will release it immediately."
+    fi
+}
+
+cmd_off() {
+    need_root off; ensure_msr
+    local t; t=$(hottest)
+    if (( t >= TEMP_GUARD )) && [[ ${1:-} != --force ]]; then
+        die "hottest sensor is ${t} C -- the throttle may be legitimate. Use --force to override."
+    fi
+    set_bit 0
+    publish_state disabled
+    echo "BD PROCHOT disabled. The CPU now ignores external PROCHOT."
+    echo "Re-enable with 'sudo $0 on' once the machine is healthy."
+    echo "This does not survive a reboot."
+}
+
+cmd_on() {
+    need_root on; ensure_msr
+    set_bit 1
+    publish_state enabled
+    echo "BD PROCHOT re-enabled. External thermal protection is active again."
+}
+
+case "${1:-status}" in
+    status) cmd_status ;;
+    off)    cmd_off "${2:-}" ;;
+    on)     cmd_on ;;
+    *)      cat <<USAGE
+usage: prochot [status|off|on]
+
+  status  show BD PROCHOT state, whether PROCHOT is asserted, clock and temp
+  off     make the CPU ignore external PROCHOT (escapes a latched assertion)
+  on      restore normal behaviour
+
+Needs root. 'off' refuses above ${TEMP_GUARD} C unless given --force.
+USAGE
+            exit 1 ;;
+esac

@@ -22,6 +22,7 @@ set -euo pipefail
 MSR=0x1FC
 BIT=0
 TEMP_GUARD=85
+STATE_FILE=/run/cpunetwatch-bdprochot
 
 die() { printf 'prochot: %s\n' "$1" >&2; exit 1; }
 
@@ -36,6 +37,13 @@ ensure_msr() {
     if [[ -r $ld ]] && ! grep -q '\[none\]' "$ld"; then
         die "kernel lockdown is active; MSR writes are blocked"
     fi
+}
+
+publish_state() {
+    # Best-effort: the panel indicator reads this to show the current setting.
+    [[ $EUID -eq 0 ]] || return 0
+    printf '%s\n' "$1" > "$STATE_FILE" 2>/dev/null || return 0
+    chmod 0644 "$STATE_FILE" 2>/dev/null || true
 }
 
 hottest() {
@@ -56,15 +64,49 @@ asserted() {
     cat /sys/class/drm/card*/gt/gt0/throttle_reason_prochot 2>/dev/null | head -1
 }
 
+raw_msr() {
+    local v; v=$(rdmsr -c $MSR 2>/dev/null) || return 1
+    [[ $v =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+    echo "$v"
+}
+
 bd_state() {
-    local raw; raw=$(rdmsr -c $MSR 2>/dev/null) || return 1
-    (( ( raw >> BIT ) & 1 ))  && echo enabled || echo disabled
+    local raw; raw=$(raw_msr) || return 1
+    (( ( raw >> BIT ) & 1 )) && echo enabled || echo disabled
+}
+
+# wrmsr parses its value as HEXADECIMAL. Passing bash's decimal arithmetic
+# result silently writes a completely different register value, so always
+# format with %x -- and verify the write actually landed, because wrmsr can
+# exit 0 while the CPU rejects or ignores the store.
+set_bit() {
+    local want=$1 raw new
+    raw=$(raw_msr) || die "cannot read MSR $MSR"
+    if [[ $want == 1 ]]; then
+        new=$(( raw | (1 << BIT) ))
+    else
+        new=$(( raw & ~(1 << BIT) ))
+    fi
+    printf '  %-22s %s\n' "before:" "$raw"
+    printf '  %-22s %s\n' "writing:" "$(printf '0x%x' "$new")"
+    wrmsr -a $MSR "$(printf '0x%x' "$new")" \
+        || die "wrmsr failed -- the CPU rejected the write"
+
+    local after; after=$(raw_msr) || die "cannot re-read MSR $MSR"
+    printf '  %-22s %s\n' "after:" "$after"
+    if (( ( (after >> BIT) & 1 ) != want )); then
+        die "write did not stick: bit $BIT is still $(( (after >> BIT) & 1 )).
+       This MSR is likely locked by firmware on this machine, so BD PROCHOT
+       cannot be toggled here. Fall back to a reboot."
+    fi
 }
 
 cmd_status() {
     need_root status; ensure_msr
     local st; st=$(bd_state) || die "cannot read MSR $MSR"
-    printf '  BD PROCHOT (MSR %s bit %d) : %s\n' "$MSR" "$BIT" "$st"
+    publish_state "$st"
+    printf '  MSR %s raw value        : %s\n' "$MSR" "$(raw_msr)"
+    printf '  BD PROCHOT (bit %d)          : %s\n' "$BIT" "$st"
     printf '  PROCHOT currently asserted : %s\n' "$(asserted)"
     printf '  fastest core               : %s MHz\n' "$(max_mhz)"
     printf '  hottest sensor             : %s C\n' "$(hottest)"
@@ -81,8 +123,8 @@ cmd_off() {
     if (( t >= TEMP_GUARD )) && [[ ${1:-} != --force ]]; then
         die "hottest sensor is ${t} C -- the throttle may be legitimate. Use --force to override."
     fi
-    local raw; raw=$(rdmsr -c $MSR)
-    wrmsr -a $MSR $(( raw & ~(1 << BIT) ))
+    set_bit 0
+    publish_state disabled
     echo "BD PROCHOT disabled. The CPU now ignores external PROCHOT."
     echo "Re-enable with 'sudo $0 on' once the machine is healthy."
     echo "This does not survive a reboot."
@@ -90,8 +132,8 @@ cmd_off() {
 
 cmd_on() {
     need_root on; ensure_msr
-    local raw; raw=$(rdmsr -c $MSR)
-    wrmsr -a $MSR $(( raw | (1 << BIT) ))
+    set_bit 1
+    publish_state enabled
     echo "BD PROCHOT re-enabled. External thermal protection is active again."
 }
 

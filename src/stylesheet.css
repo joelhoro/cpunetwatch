@@ -294,3 +294,39 @@
     font-feature-settings: "tnum";
     padding-top: 6px;
 }
+
+/* ---- action button in the menu ---- */
+
+.cnw-action {
+    font-size: 0.78em;
+    font-weight: bold;
+    color: #ffffff;
+    background-color: rgba(153, 193, 241, 0.22);
+    border: 1px solid rgba(153, 193, 241, 0.45);
+    border-radius: 10px;
+    padding: 3px 12px;
+}
+
+.cnw-action:hover { background-color: rgba(153, 193, 241, 0.38); }
+.cnw-action:focus { border: 1px solid rgba(153, 193, 241, 0.9); }
+
+.cnw-action-warn {
+    font-size: 0.78em;
+    font-weight: bold;
+    color: #3d2b00;
+    background-color: #f8e45c;
+    border: 1px solid #e5a50a;
+    border-radius: 10px;
+    padding: 3px 12px;
+}
+
+.cnw-action-warn:hover { background-color: #f9f06b; }
+
+.cnw-action-busy {
+    font-size: 0.78em;
+    color: #77767b;
+    background-color: rgba(255, 255, 255, 0.06);
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 3px 12px;
+}
