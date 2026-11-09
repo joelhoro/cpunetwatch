@@ -1,6 +1,7 @@
 import GLib from 'gi://GLib';
 import {parseReport, classifyTiger, parseSize, parseReclaimable,
-        isPreview, previewUrl, TIGER_STATE} from './tiger.js';
+        isPreview, previewUrl, TIGER_STATE, pruneCommand,
+        prunableGb} from './tiger.js';
 let pass=0,fail=0;
 const t=(n,g,w)=>{const ok=JSON.stringify(g)===JSON.stringify(w);
   if(ok){pass++;print(`  PASS  ${n}: ${JSON.stringify(g)}`);}
@@ -48,5 +49,21 @@ t('80% disk -> warn', classifyTiger({...healthy,disk:{pct:85}}).state, TIGER_STA
 t('many exited -> warn', classifyTiger({...healthy,exited:40}).state, TIGER_STATE.WARN);
 t('verdict names the container', classifyTiger({...healthy,
    restarting:[{name:'boom-web-1'}]}).verdict.includes('boom-web-1'), true);
+
+print('\n=== prune safety ===');
+const cmd=pruneCommand();
+t('never passes --volumes', cmd.includes('--volumes'), false);
+t('never uses system prune', cmd.includes('system prune'), false);
+t('prunes images', cmd.includes('image prune -af'), true);
+t('prunes build cache', cmd.includes('builder prune -af'), true);
+t('prunes stopped containers', cmd.includes('container prune'), true);
+t('volume reclaim tracked separately', r.reclaimableVolumesGb > 0, true);
+t('prunable excludes volumes',
+  Math.round(prunableGb(r)), Math.round(r.reclaimableGb - r.reclaimableVolumesGb));
+t('prunable is the bulk of it', prunableGb(r) > 80, true);
+t('null report -> 0', prunableGb(null), 0);
+print(`  real host: ${r.reclaimableGb.toFixed(1)} GB reclaimable, ` +
+      `${prunableGb(r).toFixed(1)} GB prunable safely, ` +
+      `${r.reclaimableVolumesGb.toFixed(1)} GB in volumes left alone`);
 
 print(`\n${fail===0?'ALL TESTS PASSED':fail+' FAILURES'}  (${pass} passed)`);

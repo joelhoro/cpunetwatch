@@ -29,6 +29,7 @@ import {
 import {Series, RANGES, loadSeries, saveSeries} from './history.js';
 import {
     TIGER_STATE, remoteCommand, parseReport, classifyTiger, previewUrl,
+    pruneCommand, prunableGb,
 } from './tiger.js';
 import {Graph} from './graph.js';
 
@@ -1046,7 +1047,10 @@ class TigerIndicator extends PanelMenu.Button {
         this._rowRunning = new DetailRow('Containers running', '🔗');
         this._rowBad = new DetailRow('Needing attention', '🚨');
         this._rowExited = new DetailRow('Stopped, not removed', '🔌');
-        this._rowReclaim = new DetailRow('Reclaimable', '🧹');
+        this._rowReclaim = new ActionRow('🧹', 'Reclaimable');
+        this._rowReclaim.onClick(() => this._prune());
+        this._pruneArmed = false;
+        this._pruning = false;
         this.menu.addMenuItem(this._rowRunning);
         this.menu.addMenuItem(this._rowBad);
         this.menu.addMenuItem(this._rowExited);
@@ -1165,13 +1169,14 @@ class TigerIndicator extends PanelMenu.Button {
             this._rowExited.setValue(
                 report.exited === null ? '--' : String(report.exited),
                 (report.exited ?? 0) >= 20 ? 'warn' : 'dim');
-            this._rowReclaim.setValue(`${report.reclaimableGb.toFixed(0)} GB`,
-                report.reclaimableGb >= 40 ? 'warn' : 'dim');
+            this._lastReport = report;
+            this._refreshPrune();
             this._syncPreviews(report.previews);
         } else {
-            for (const r of [this._rowRunning, this._rowBad, this._rowExited,
-                this._rowReclaim])
+            for (const r of [this._rowRunning, this._rowBad, this._rowExited])
                 r.setValue('--', 'dim');
+            this._lastReport = null;
+            this._refreshPrune();
             this._syncPreviews([]);
         }
 
@@ -1183,6 +1188,91 @@ class TigerIndicator extends PanelMenu.Button {
         } else if (state === TIGER_STATE.OK) {
             this._notified = false;
         }
+    }
+
+    _refreshPrune() {
+        const gb = prunableGb(this._lastReport);
+        if (this._pruning) {
+            this._rowReclaim.setKey('Pruning…');
+            this._rowReclaim.setButton('working', 'cnw-action-busy', false);
+            return;
+        }
+        if (!this._lastReport) {
+            this._rowReclaim.setKey('Reclaimable');
+            this._rowReclaim.setButton('--', 'cnw-action-busy', false);
+            return;
+        }
+        if (this._pruneArmed) {
+            this._rowReclaim.setKey(`Free ${gb.toFixed(0)} GB? Volumes untouched`);
+            this._rowReclaim.setButton('Confirm', 'cnw-action-warn');
+            return;
+        }
+        this._rowReclaim.setKey(`Reclaimable  ${gb.toFixed(0)} GB`);
+        this._rowReclaim.setButton('Prune', 'cnw-action', gb >= 1);
+    }
+
+    /**
+     * First click arms, second runs. Images, stopped containers and build
+     * cache only -- never volumes, which on this host hold orphaned app data.
+     */
+    _prune() {
+        if (this._pruning)
+            return;
+        if (!this._pruneArmed) {
+            this._pruneArmed = true;
+            this._refreshPrune();
+            this._armId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 6, () => {
+                this._armId = null;
+                this._pruneArmed = false;
+                this._refreshPrune();
+                return GLib.SOURCE_REMOVE;
+            });
+            return;
+        }
+
+        if (this._armId) {
+            GLib.Source.remove(this._armId);
+            this._armId = null;
+        }
+        this._pruneArmed = false;
+        this._pruning = true;
+        this._refreshPrune();
+
+        const before = prunableGb(this._lastReport);
+        let proc;
+        try {
+            proc = Gio.Subprocess.new(
+                ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+                    TIGER_HOST, pruneCommand()],
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+        } catch (e) {
+            this._pruning = false;
+            this._refreshPrune();
+            Main.notifyError('Prune failed to start', String(e));
+            return;
+        }
+        this._pruneProc = proc;
+        proc.communicate_utf8_async(null, this._cancellable, (pr, res) => {
+            this._pruning = false;
+            this._pruneProc = null;
+            let out = '', err = '';
+            try {
+                [, out, err] = pr.communicate_utf8_finish(res);
+            } catch (e) {
+                err = String(e);
+            }
+            if (this._cancellable.is_cancelled())
+                return;
+            if (pr.get_exit_status() !== 0) {
+                Main.notifyError('Prune failed', (err || out).trim().slice(0, 300));
+            } else {
+                Main.notify(`${TIGER_HOST}: pruned`,
+                    `Freed roughly ${before.toFixed(0)} GB of images, ` +
+                    'stopped containers and build cache.');
+            }
+            this._refreshPrune();
+            this._poll();
+        });
     }
 
     /** Rebuild the clickable preview list; URLs open in the browser. */
@@ -1233,7 +1323,7 @@ class TigerIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        for (const id of ['_timeoutId', '_saveId']) {
+        for (const id of ['_timeoutId', '_saveId', '_armId']) {
             if (this[id]) {
                 GLib.Source.remove(this[id]);
                 this[id] = null;
@@ -1242,6 +1332,7 @@ class TigerIndicator extends PanelMenu.Button {
         saveSeries('tiger.json', this._series);
         this._cancellable.cancel();
         try { this._proc?.force_exit(); } catch { /* already gone */ }
+        try { this._pruneProc?.force_exit(); } catch { /* already gone */ }
         super.destroy();
     }
 });

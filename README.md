@@ -175,5 +175,18 @@ The panel shows disk percent. The menu gives container counts, how much
 since a slow leak from accumulating images is invisible in any single `df` —
 and your live branch previews as clickable URLs.
 
+### Prune button
+
+The Reclaimable row has a two-step **Prune** button: the first click arms it
+(and disarms after six seconds), the second runs it.
+
+It runs `container prune -f && image prune -af && builder prune -af` and
+deliberately **not** `docker system prune --volumes`. Dangling volumes are
+anonymous ones no container references — typically orphaned application data,
+since images like postgres create volumes unnamed. On a real host that was
+2.2 GB against 86.3 GB in images, stopped containers and build cache: a poor
+trade of data risk for 2.5% more space. Images and cache are regenerable;
+volume cleanup stays a deliberate manual act.
+
 Requires passphrase-free key auth to the host, since gnome-shell runs `ssh`
 with `BatchMode=yes`.

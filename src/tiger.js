@@ -94,10 +94,15 @@ export function parseReport(stdout) {
     }
 
     let reclaimable = 0;
+    let reclaimableVolumes = 0;
     for (const line of sysRaw.split('\n')) {
         const parts = line.split('\t');
-        if (parts.length >= 3)
-            reclaimable += parseReclaimable(parts[2]);
+        if (parts.length < 3)
+            continue;
+        const bytes = parseReclaimable(parts[2]);
+        reclaimable += bytes;
+        if (/volume/i.test(parts[0]))
+            reclaimableVolumes += bytes;
     }
 
     return {
@@ -109,6 +114,7 @@ export function parseReport(stdout) {
         exited: Number.isFinite(exited) ? exited : null,
         disk,
         reclaimableGb: reclaimable / 1e9,
+        reclaimableVolumesGb: reclaimableVolumes / 1e9,
     };
 }
 
@@ -182,4 +188,29 @@ export function previewUrl(name, domain = 'horowitz.com') {
     if (r)
         return `https://${r[1]}.${domain}`;
     return null;
+}
+
+/**
+ * Prune command for the menu button.
+ *
+ * Deliberately NOT `docker system prune --volumes`. Dangling volumes are
+ * anonymous ones no container references -- on this host that is orphaned
+ * application data (postgres and friends create them unnamed) worth only a
+ * couple of GB. Images, stopped containers and build cache are regenerable
+ * and account for nearly all of the reclaimable space, so the button stops
+ * there. Volume cleanup stays a deliberate manual act.
+ */
+export function pruneCommand() {
+    return [
+        'docker container prune -f',
+        'docker image prune -af',
+        'docker builder prune -af',
+    ].join(' && ');
+}
+
+/** GB that pruneCommand() would actually free (volumes excluded). */
+export function prunableGb(report) {
+    if (!report)
+        return 0;
+    return Math.max(0, report.reclaimableGb - (report.reclaimableVolumesGb ?? 0));
 }
