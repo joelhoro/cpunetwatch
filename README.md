@@ -34,9 +34,40 @@ The real current clock of the fastest core, and crucially it distinguishes
 | Unknown | 🔎 | Sensors unreadable |
 
 Throttling while hot under load is the system doing its job. Throttling while
-cool and idle is a fault — and it needs an **EC reset** (full shutdown,
-unplug, hold power 15–30 s, boot). A normal reboot will not clear it, because
-the embedded controller keeps state across warm restarts.
+cool and idle is a fault.
+
+### Clearing a latched fault
+
+In increasing order of disruption:
+
+1. **`sudo tools/prochot off`** — clears it instantly, no reboot. See below.
+2. **Reboot** — often enough on its own.
+3. **EC reset** — full shutdown, unplug, hold power 15–30 s, boot. The
+   fallback when a reboot doesn't do it.
+
+## tools/prochot
+
+`MSR_POWER_CTL` (0x1FC) bit 0 enables the CPU's response to the PROCHOT pin
+being asserted externally — by the embedded controller. Clear it and a
+*latched* assertion becomes inert immediately.
+
+```sh
+sudo tools/prochot status   # BD PROCHOT state, assertion, clock, temp
+sudo tools/prochot off      # ignore external PROCHOT
+sudo tools/prochot on       # restore
+```
+
+This does **not** disable the CPU's own die-temperature protection (TCC), the
+thermal trip, or the PL1/PL2/PL4 power limits — those are separate and stay
+active. It *does* disable the embedded controller's ability to force a
+throttle for reasons the CPU cannot see: VRM temperature, battery current
+limits, chassis skin temperature. Use it to escape a stuck assertion, then
+turn it back on.
+
+`off` refuses above 85 °C unless forced. The setting is volatile and does not
+survive a reboot, which is deliberate — it fails safe.
+
+Requires `msr-tools` and a kernel without lockdown active.
 
 ### Network
 
