@@ -31,6 +31,9 @@ import {
     TIGER_STATE, remoteCommand, parseReport, classifyTiger, previewUrl,
     pruneCommand, prunableGb,
 } from './tiger.js';
+import {
+    scanSessions, totalTokens, formatTokens, sessionLabel, ACTIVE_WINDOW_MS,
+} from './claude.js';
 import {Graph} from './graph.js';
 
 const POLL_SECONDS = 2;
@@ -44,6 +47,9 @@ const BD_STATE_FILE = '/run/cpunetwatch-bdprochot';
 const TIGER_HOST = 'tiger';
 const TIGER_POLL_SECONDS = 60;
 const TIGER_PANEL_ICON = 'network-server-symbolic';
+const CLAUDE_PANEL_ICON = 'chat-symbolic';
+const CLAUDE_POLL_SECONDS = 30;
+const TERMINAL = ['gnome-terminal', '--'];
 const DNS_PROBE_HOST = 'cloudflare.com';
 const INTERNET_PROBE = '1.1.1.1';
 
@@ -1056,6 +1062,11 @@ class TigerIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._rowExited);
         this.menu.addMenuItem(this._rowReclaim);
 
+        this._rowShell = new ActionRow('🖥', `Shell on ${TIGER_HOST}`);
+        this._rowShell.setButton('Open', 'cnw-action');
+        this._rowShell.onClick(() => this._openShell());
+        this.menu.addMenuItem(this._rowShell);
+
         this._previewLabel = sectionLabel('Branch previews');
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.menu.addMenuItem(this._previewLabel);
@@ -1187,6 +1198,16 @@ class TigerIndicator extends PanelMenu.Button {
             }
         } else if (state === TIGER_STATE.OK) {
             this._notified = false;
+        }
+    }
+
+    _openShell() {
+        this.menu.close();
+        try {
+            Gio.Subprocess.new([...TERMINAL, 'ssh', TIGER_HOST],
+                Gio.SubprocessFlags.NONE);
+        } catch (e) {
+            Main.notifyError('Could not open a terminal', String(e));
         }
     }
 
@@ -1337,6 +1358,158 @@ class TigerIndicator extends PanelMenu.Button {
     }
 });
 
+/* ------------------------------------------------------------------ *
+ * Claude Code sessions
+ * ------------------------------------------------------------------ */
+
+const ClaudeIndicator = GObject.registerClass(
+class ClaudeIndicator extends PanelMenu.Button {
+    _init() {
+        super._init(0.5, 'Claude Sessions', false);
+
+        this._root = GLib.build_filenamev(
+            [GLib.get_home_dir(), '.claude', 'projects']);
+        this._cache = new Map();
+        this._series = loadSeries('claude.json');
+        this._rows = [];
+
+        const p = buildPanelBox('netw-panel-label', 'netw-icon', CLAUDE_PANEL_ICON);
+        this._icon = p.icon;
+        this._label = p.label;
+        this._labelCls = new ClassSwapper(p.label);
+        this._iconCls = new ClassSwapper(p.icon);
+        this.add_child(p.box);
+
+        this._verdictGlyph = new St.Label({
+            text: '', style_class: 'cputhr-verdict-glyph',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._verdict = new St.Label({
+            text: 'Reading transcripts…', style_class: 'cputhr-verdict',
+        });
+        this._verdict.clutter_text.line_wrap = true;
+        this._verdict.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        this._verdict.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._verdictCls = new ClassSwapper(this._verdict);
+
+        const vi = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        vi.add_child(this._verdictGlyph);
+        vi.add_child(this._verdict);
+        this.menu.addMenuItem(vi);
+
+        this._hero = new HeroReadout('');
+        this.menu.addMenuItem(this._hero);
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._graphSection = new GraphSection('', [0.76, 0.60, 0.95],
+            v => formatTokens(v), {floorZero: true});
+        this._graphSection.attach(this._series, null);
+        this.menu.addMenuItem(this._graphSection);
+        this.menu.connect('open-state-changed', (m, open) => {
+            if (open) {
+                this._update();
+                this._graphSection.refresh();
+            }
+        });
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._activeLabel = sectionLabel('Active sessions');
+        this.menu.addMenuItem(this._activeLabel);
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(sectionLabel('Totals'));
+        this._rowTracked = new DetailRow('Sessions tracked', '📁');
+        this._rowAllTime = new DetailRow('All-time tokens', '🧮');
+        this.menu.addMenuItem(this._rowTracked);
+        this.menu.addMenuItem(this._rowAllTime);
+
+        this._update();
+        this._timeoutId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_LOW, CLAUDE_POLL_SECONDS, () => {
+                this._update();
+                return GLib.SOURCE_CONTINUE;
+            });
+        this._saveId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_LOW, SAVE_SECONDS, () => {
+                if (this._series.dirty)
+                    saveSeries('claude.json', this._series);
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _update() {
+        let r;
+        try {
+            r = scanSessions(this._root, this._cache);
+        } catch (e) {
+            this._verdict.text = `Could not read transcripts: ${e}`;
+            return;
+        }
+
+        const todayTok = totalTokens(r.todayUsage);
+        const n = r.active.length;
+
+        this._series.push(Date.now(), todayTok, 0);
+
+        this._label.text = String(n);
+        this._labelCls.set(n ? 'netw-normal' : 'netw-unknown');
+        this._iconCls.set(n ? 'ico-plain' : 'ico-dim');
+
+        this._verdictGlyph.text = n ? '🚀' : '💤';
+        this._verdict.text = n
+            ? `${n} session${n > 1 ? 's' : ''} active in the last ` +
+              `${Math.round(ACTIVE_WINDOW_MS / 60000)} minutes.`
+            : 'No sessions active right now.';
+        this._verdictCls.set(n ? 'cputhr-verdict-ok' : 'cputhr-verdict-info');
+
+        this._hero.setBadge(n ? '🚀' : '💤');
+        this._hero.setNumber(formatTokens(todayTok), 'cputhr-hero-ok');
+        this._hero.setUnit('tokens');
+        this._hero.setSub(`today · ${r.today}`);
+        this._hero.setCaption(
+            `${r.sessions.length} sessions tracked across all projects`);
+        const peak = Math.max(todayTok, 1);
+        this._hero.setFill(todayTok / Math.max(peak, 1e9), null);
+
+        for (const row of this._rows)
+            row.destroy();
+        this._rows = [];
+        const shown = r.active.length ? r.active : r.sessions.slice(0, 3);
+        for (const sess of shown.slice(0, 6)) {
+            const row = new DetailRow(
+                sessionLabel(sess).slice(0, 38), sess.branch ? '🌿' : '📄');
+            row.setValue(formatTokens(totalTokens(sess.usage)),
+                r.active.includes(sess) ? 'good' : 'dim');
+            this.menu.addMenuItem(row, this._menuIndexAfterActiveLabel());
+            this._rows.push(row);
+        }
+        this._activeLabel.visible = true;
+
+        let allTime = 0;
+        for (const sess of r.sessions)
+            allTime += totalTokens(sess.usage);
+        this._rowTracked.setValue(String(r.sessions.length), 'dim');
+        this._rowAllTime.setValue(formatTokens(allTime), 'dim');
+    }
+
+    /** Insert session rows directly beneath their section heading. */
+    _menuIndexAfterActiveLabel() {
+        const items = this.menu._getMenuItems();
+        return items.indexOf(this._activeLabel) + 1 + this._rows.length;
+    }
+
+    destroy() {
+        for (const id of ['_timeoutId', '_saveId']) {
+            if (this[id]) {
+                GLib.Source.remove(this[id]);
+                this[id] = null;
+            }
+        }
+        saveSeries('claude.json', this._series);
+        super.destroy();
+    }
+});
+
 /* ------------------------------------------------------------------ */
 
 export default class CpuThrottleWatchExtension extends Extension {
@@ -1347,6 +1520,8 @@ export default class CpuThrottleWatchExtension extends Extension {
         Main.panel.addToStatusArea(`${this.uuid}-net`, this._net, 1, 'right');
         this._tiger = new TigerIndicator();
         Main.panel.addToStatusArea(`${this.uuid}-tiger`, this._tiger, 2, 'right');
+        this._claude = new ClaudeIndicator();
+        Main.panel.addToStatusArea(`${this.uuid}-claude`, this._claude, 3, 'right');
     }
 
     disable() {
@@ -1356,5 +1531,7 @@ export default class CpuThrottleWatchExtension extends Extension {
         this._net = null;
         this._tiger?.destroy();
         this._tiger = null;
+        this._claude?.destroy();
+        this._claude = null;
     }
 }

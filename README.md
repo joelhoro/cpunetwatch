@@ -190,3 +190,22 @@ volume cleanup stays a deliberate manual act.
 
 Requires passphrase-free key auth to the host, since gnome-shell runs `ssh`
 with `BatchMode=yes`.
+
+## Claude Sessions
+
+Panel shows how many Claude Code sessions are active (transcript touched in
+the last 15 minutes). The menu gives today's token total, the active sessions
+with project · worktree and title, and all-time totals.
+
+Transcripts are 200+ MB of JSONL across dozens of files, so nothing is ever
+re-read: each file is tracked by byte offset and only the appended tail is
+parsed, with a truncated trailing line carried to the next pass. A cold scan
+takes ~750 ms; subsequent ones ~40 ms.
+
+Day buckets use the **local** date. Transcript timestamps are UTC, so slicing
+the ISO string puts an evening's work on tomorrow and makes "today" read zero
+from late afternoon onward.
+
+## Shell on the host
+
+Tiger Watch has an **Open** button that launches `gnome-terminal -- ssh tiger`.
