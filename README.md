@@ -216,15 +216,17 @@ Tiger Watch has an **Open** button that launches `gnome-terminal -- ssh tiger`.
 
 ### Reopening a session
 
-Session rows in the Claude menu are clickable: selecting one opens a terminal
-in that session's working directory running `claude --resume <id>`.
+Session rows in the Claude menu are clickable: selecting one opens that
+session in the Claude desktop app via its deep link,
+`claude://resume?session=<uuid>`.
 
-Not the desktop app. `claude --desktop` reports *"isn't available on this
-platform. It works on macOS and Windows (x64)"*, and the desktop app registers
-no deep link for a specific local session — it knows only `claude://code/new`.
-A terminal is the only route that works on Linux. `claude` also requires a
-real tty, so it must be handed to a terminal emulator rather than spawned with
-its output redirected.
+The app's URL handler has a Resume route that reads a `session` query
+parameter and imports the CLI session by id, locating the transcript itself —
+no working directory needed. Confirmed by the app's own log:
+`[CCD] Session local_<uuid> warmed successfully`.
+
+Note `claude --desktop` is **not** the route: it reports *"isn't available on
+this platform. It works on macOS and Windows (x64)"*.
 
 Session ids come from the transcript **filename**, which is the session uuid.
 That is more reliable than the `sessionId` record — every transcript is

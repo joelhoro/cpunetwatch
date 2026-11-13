@@ -335,15 +335,17 @@ class SessionRow extends PopupMenu.PopupBaseMenuItem {
     }
 
     /**
-     * Reopen in a terminal.
+     * Reopen in the Claude desktop app via its deep link.
      *
-     * Not the desktop app: `claude --desktop` reports "isn't available on
-     * this platform. It works on macOS and Windows (x64)", and the desktop
-     * app registers no deep link for a specific local session -- it knows
-     * only claude://code/new. A terminal is the only route that works.
+     * The app's URL handler has a Resume route that takes a `session` query
+     * parameter and imports that CLI session by id:
      *
-     * claude needs a real tty, so it must be handed to a terminal emulator
-     * rather than spawned with its output redirected.
+     *   case Dl.Resume: { let e = i.searchParams.get(`session`); ...
+     *                     t.importCliSession(e) }
+     *
+     * No cwd is needed -- the app locates the transcript itself. This is
+     * preferable to `claude --desktop`, which is macOS/Windows only, and to
+     * spawning a terminal, which needs a tty.
      */
     _open() {
         const s = this._session;
@@ -351,13 +353,9 @@ class SessionRow extends PopupMenu.PopupBaseMenuItem {
             Main.notifyError('Cannot reopen', 'No session id for this transcript.');
             return;
         }
-        const cwd = s.cwd && GLib.file_test(s.cwd, GLib.FileTest.IS_DIR)
-            ? s.cwd : GLib.get_home_dir();
+        const uri = `claude://resume?session=${encodeURIComponent(s.sessionId)}`;
         try {
-            Gio.Subprocess.new([
-                ...TERMINAL_WITH_CWD(cwd),
-                claudeBinary(), '--resume', s.sessionId,
-            ], Gio.SubprocessFlags.NONE);
+            Gio.AppInfo.launch_default_for_uri(uri, null);
         } catch (e) {
             Main.notifyError('Could not reopen the session', String(e));
         }
