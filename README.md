@@ -202,6 +202,10 @@ re-read: each file is tracked by byte offset and only the appended tail is
 parsed, with a truncated trailing line carried to the next pass. A cold scan
 takes ~750 ms; subsequent ones ~40 ms.
 
+`scanSessions` returns snapshots rather than its live cache entries: the cache
+is mutated in place by later scans, so handing out references would make an
+earlier result change silently underneath its holder.
+
 Day buckets use the **local** date. Transcript timestamps are UTC, so slicing
 the ISO string puts an evening's work on tomorrow and makes "today" read zero
 from late afternoon onward.
@@ -209,3 +213,13 @@ from late afternoon onward.
 ## Shell on the host
 
 Tiger Watch has an **Open** button that launches `gnome-terminal -- ssh tiger`.
+
+### Reopening a session
+
+Session rows in the Claude menu are clickable: selecting one runs
+`claude --desktop --resume <id>` from that session's own working directory,
+reopening it in the Claude desktop app.
+
+Session ids come from the transcript **filename**, which is the session uuid.
+That is more reliable than the `sessionId` record — every transcript is
+uuid-named, but a few carry no `sessionId` line at all.

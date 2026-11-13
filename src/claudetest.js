@@ -1,5 +1,5 @@
 import GLib from 'gi://GLib';
-import {addAcc, localDay, describeSlug, parseJsonl, foldRecords, addUsage, emptyUsage,
+import {sessionIdFromPath, addAcc, localDay, describeSlug, parseJsonl, foldRecords, addUsage, emptyUsage,
         totalTokens, formatTokens, scanSessions, sessionLabel} from './claude.js';
 let pass=0,fail=0;
 const t=(n,g,w)=>{const ok=JSON.stringify(g)===JSON.stringify(w);
@@ -74,6 +74,18 @@ addUsage(right,{input_tokens:5,cache_read_input_tokens:50,output_tokens:3});
 t('addUsage on the raw API shape works', totalTokens(right), 58);
 t('addAcc tolerates null', totalTokens(addAcc(emptyUsage(),null)), 0);
 
+print('\n=== sessionId and cwd are captured (needed to reopen) ===');
+const st4={lastTs:0,branch:null,title:null,titleIsCustom:false,
+           sessionId:null,cwd:null,usage:emptyUsage(),byDay:{}};
+foldRecords(st4,[{sessionId:'abc-123', cwd:'/home/joel/dev/godot',
+                  timestamp:'2026-11-13T10:00:00Z'}]);
+t('sessionId captured', st4.sessionId, 'abc-123');
+t('id from filename',
+  sessionIdFromPath('/x/y/d690d121-8678-4cad-9cd0-afe249b9e0b0.jsonl'),
+  'd690d121-8678-4cad-9cd0-afe249b9e0b0');
+t('non-uuid filename -> null', sessionIdFromPath('/x/notes.jsonl'), null);
+t('cwd captured', st4.cwd, '/home/joel/dev/godot');
+
 print('\n=== REAL scan of ~/.claude/projects ===');
 const root=GLib.build_filenamev([GLib.get_home_dir(),'.claude','projects']);
 const cache=new Map();
@@ -89,9 +101,20 @@ print(`  cold scan ${cold.toFixed(0)} ms -> warm rescan ${warm.toFixed(0)} ms`);
 for (const s of r1.sessions.slice(0,3))
   print(`    ${formatTokens(totalTokens(s.usage)).padStart(7)}  ${sessionLabel(s).slice(0,56)}`);
 t('found sessions', r1.sessions.length > 10, true);
+t('every real session has an id', r1.sessions.every(x=>x.sessionId), true);
+t('nearly all have a cwd',
+  r1.sessions.filter(x=>x.cwd).length >= r1.sessions.length-1, true);
 t('warm rescan is far cheaper', warm < cold/5, true);
-t('totals stable across rescans',
-  totalTokens(r1.sessions[0].usage), totalTokens(r2.sessions[0].usage));
+// Compare the SAME session by id, not by index: ordering is by recency and
+// a live session can overtake another between the two scans.
+const id0=r1.sessions[0].sessionId;
+const again=r2.sessions.find(x=>x.sessionId===id0);
+t('same session found after rescan', !!again, true);
+t('its total never goes backwards',
+  totalTokens(again.usage) >= totalTokens(r1.sessions[0].usage), true);
+t('an earlier result is not mutated by a later scan',
+  totalTokens(r1.sessions.find(x=>x.sessionId===id0).usage),
+  totalTokens(r1.sessions[0].usage));
 t('today total is non-zero when sessions ran today',
   totalTokens(r1.todayUsage) > 0, true);
 t('today total equals the sum of per-session day buckets',

@@ -11,6 +11,20 @@ import GLib from 'gi://GLib';
 
 export const ACTIVE_WINDOW_MS = 15 * 60_000;
 
+const UUID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Session id from the transcript filename.
+ *
+ * More reliable than the sessionId record: every transcript is uuid-named,
+ * but a few carry no sessionId line at all.
+ */
+export function sessionIdFromPath(path) {
+    const base = path.replace(/^.*\//, '').replace(/\.jsonl$/, '');
+    return UUID_RE.test(base) ? base : null;
+}
+
 /** "-home-joel-dev-godot--claude-worktrees-step-name-x-94eeac" -> readable */
 export function describeSlug(slug) {
     const m = /^-home-[^-]+-dev-(.+?)(?:--claude-worktrees-(.+))?$/.exec(slug);
@@ -102,6 +116,10 @@ export function foldRecords(state, records) {
         }
         if (r.gitBranch)
             state.branch = r.gitBranch;
+        if (r.sessionId && !state.sessionId)
+            state.sessionId = r.sessionId;
+        if (r.cwd)
+            state.cwd = r.cwd;
         if (r.type === 'custom-title' && r.customTitle)
             state.title = r.customTitle;
         else if (r.type === 'ai-title' && r.aiTitle && !state.titleIsCustom)
@@ -130,6 +148,7 @@ function newState(slug, path) {
     return {
         slug, path, project, worktree,
         title: null, titleIsCustom: false, branch: null,
+        sessionId: sessionIdFromPath(path), cwd: null,
         offset: 0, carry: '', lastTs: 0,
         usage: emptyUsage(), byDay: {},
     };
@@ -213,7 +232,19 @@ export function scanSessions(root, cache, now = Date.now()) {
             cache.delete(path);
     }
 
-    const sessions = [...cache.values()].sort((a, b) => b.lastTs - a.lastTs);
+    // Return snapshots, not the live cache entries. The cache is mutated in
+    // place by later scans, so handing out references makes an earlier result
+    // silently change underneath its holder.
+    const sessions = [...cache.values()]
+        .map(s => ({
+            slug: s.slug, path: s.path, project: s.project,
+            worktree: s.worktree, title: s.title, branch: s.branch,
+            sessionId: s.sessionId, cwd: s.cwd, lastTs: s.lastTs,
+            usage: {...s.usage},
+            byDay: Object.fromEntries(
+                Object.entries(s.byDay).map(([d, u]) => [d, {...u}])),
+        }))
+        .sort((a, b) => b.lastTs - a.lastTs);
     const active = sessions.filter(s => now - s.lastTs <= ACTIVE_WINDOW_MS);
     const today = localDay(now);
     const todayUsage = emptyUsage();

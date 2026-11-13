@@ -34,6 +34,13 @@ import {
 import {
     scanSessions, totalTokens, formatTokens, sessionLabel, ACTIVE_WINDOW_MS,
 } from './claude.js';
+
+/* gnome-shell's PATH does not include ~/.local/bin, so resolve explicitly. */
+function claudeBinary() {
+    const local = GLib.build_filenamev(
+        [GLib.get_home_dir(), '.local', 'bin', 'claude']);
+    return GLib.file_test(local, GLib.FileTest.IS_EXECUTABLE) ? local : 'claude';
+}
 import {Graph} from './graph.js';
 
 const POLL_SECONDS = 2;
@@ -298,6 +305,51 @@ class GraphSection extends PopupMenu.PopupBaseMenuItem {
             `avg ${this._fmt(avg)} · min ${this._fmt(mn)} · max ${this._fmt(mx)} ` +
             `· ${span < 60 ? span + 'm' : (span / 60).toFixed(1) + 'h'} of data` +
             (faults ? `  ⚠ ${faults} throttled` : '');
+    }
+});
+
+/** A session row that reopens itself in the Claude desktop app on click. */
+const SessionRow = GObject.registerClass(
+class SessionRow extends PopupMenu.PopupBaseMenuItem {
+    _init(glyph, keyText, valueText, tone, session) {
+        super._init();
+        this._session = session;
+
+        this.add_child(new St.Label({
+            text: glyph, style_class: 'cputhr-glyph',
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+        this.add_child(new St.Label({
+            text: keyText, style_class: 'cputhr-row-key',
+            x_expand: true, y_align: Clutter.ActorAlign.CENTER,
+        }));
+        this.add_child(new St.Label({
+            text: valueText,
+            style_class: `cputhr-row-value pill pill-${tone}`,
+            y_align: Clutter.ActorAlign.CENTER,
+        }));
+
+        this.connect('activate', () => this._open());
+    }
+
+    _open() {
+        const s = this._session;
+        if (!s?.sessionId) {
+            Main.notifyError('Cannot reopen', 'No session id for this transcript.');
+            return;
+        }
+        try {
+            const launcher = new Gio.SubprocessLauncher({
+                flags: Gio.SubprocessFlags.STDOUT_SILENCE |
+                       Gio.SubprocessFlags.STDERR_SILENCE,
+            });
+            // Sessions are scoped to their project directory.
+            if (s.cwd && GLib.file_test(s.cwd, GLib.FileTest.IS_DIR))
+                launcher.set_cwd(s.cwd);
+            launcher.spawnv([claudeBinary(), '--desktop', '--resume', s.sessionId]);
+        } catch (e) {
+            Main.notifyError('Could not reopen the session', String(e));
+        }
     }
 });
 
@@ -1476,10 +1528,12 @@ class ClaudeIndicator extends PanelMenu.Button {
         this._rows = [];
         const shown = r.active.length ? r.active : r.sessions.slice(0, 3);
         for (const sess of shown.slice(0, 6)) {
-            const row = new DetailRow(
-                sessionLabel(sess).slice(0, 38), sess.branch ? '🌿' : '📄');
-            row.setValue(formatTokens(totalTokens(sess.usage)),
-                r.active.includes(sess) ? 'good' : 'dim');
+            const row = new SessionRow(
+                sess.branch ? '🌿' : '📄',
+                sessionLabel(sess).slice(0, 38),
+                formatTokens(totalTokens(sess.usage)),
+                r.active.includes(sess) ? 'good' : 'dim',
+                sess);
             this.menu.addMenuItem(row, this._menuIndexAfterActiveLabel());
             this._rows.push(row);
         }

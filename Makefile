@@ -1,10 +1,15 @@
 UUID    = cpunetwatch@joelhoro.github.io
 SRC     = src
 DIST    = dist
+BUILD   = build
+# Single source of truth for the version: the git tag. Stamped into
+# metadata.json at pack time so the published label cannot drift from the
+# release, which it silently did across three tags.
+VERSION = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js prochot
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
-.PHONY: all test pack install uninstall preview clean lint
+.PHONY: all test pack install uninstall preview clean lint stamp
 
 all: pack
 
@@ -23,15 +28,25 @@ lint:
 
 # gnome-extensions ships with gnome-shell, which CI runners lack. The bundle
 # is just a flat zip of the runtime files, so fall back to zip(1) there.
-pack: lint
-	@mkdir -p $(DIST)
+stamp:
+	@rm -rf $(BUILD) && mkdir -p $(BUILD) $(DIST)
+	@cp $(SRC)/extension.js $(SRC)/metadata.json $(SRC)/stylesheet.css $(BUILD)/
+	@$(foreach f,$(EXTRA),cp $(SRC)/$(f) $(BUILD)/;)
+	@python3 -c "import json,pathlib,sys; \
+	  v='$(VERSION)' or '0.0.0'; \
+	  p=pathlib.Path('$(BUILD)/metadata.json'); \
+	  m=json.loads(p.read_text()); m['version-name']=v; \
+	  p.write_text(json.dumps(m,indent=2)+chr(10)); \
+	  print('  stamped version-name =',v)"
+
+pack: lint stamp
 	@rm -f $(DIST)/$(UUID).shell-extension.zip
 	@if command -v gnome-extensions >/dev/null 2>&1; then \
-	  gnome-extensions pack $(SRC) --force -o $(DIST) \
+	  gnome-extensions pack $(BUILD) --force -o $(DIST) \
 	    $(foreach f,$(EXTRA),--extra-source=$(f)); \
 	else \
 	  echo "gnome-extensions absent; packing with zip"; \
-	  (cd $(SRC) && zip -q -X ../$(DIST)/$(UUID).shell-extension.zip \
+	  (cd $(BUILD) && zip -q -X ../$(DIST)/$(UUID).shell-extension.zip \
 	     extension.js metadata.json stylesheet.css $(EXTRA)); \
 	fi
 	@ls -lh $(DIST)/$(UUID).shell-extension.zip
@@ -45,4 +60,4 @@ uninstall:
 	@gnome-extensions uninstall $(UUID) || rm -rf $(INSTALL)
 
 clean:
-	@rm -rf $(DIST)
+	@rm -rf $(DIST) $(BUILD)
