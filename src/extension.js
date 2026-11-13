@@ -57,6 +57,8 @@ const TIGER_PANEL_ICON = 'network-server-symbolic';
 const CLAUDE_PANEL_ICON = 'chat-symbolic';
 const CLAUDE_POLL_SECONDS = 30;
 const TERMINAL = ['gnome-terminal', '--'];
+const TERMINAL_WITH_CWD = cwd =>
+    ['gnome-terminal', `--working-directory=${cwd}`, '--'];
 const DNS_PROBE_HOST = 'cloudflare.com';
 const INTERNET_PROBE = '1.1.1.1';
 
@@ -332,21 +334,30 @@ class SessionRow extends PopupMenu.PopupBaseMenuItem {
         this.connect('activate', () => this._open());
     }
 
+    /**
+     * Reopen in a terminal.
+     *
+     * Not the desktop app: `claude --desktop` reports "isn't available on
+     * this platform. It works on macOS and Windows (x64)", and the desktop
+     * app registers no deep link for a specific local session -- it knows
+     * only claude://code/new. A terminal is the only route that works.
+     *
+     * claude needs a real tty, so it must be handed to a terminal emulator
+     * rather than spawned with its output redirected.
+     */
     _open() {
         const s = this._session;
         if (!s?.sessionId) {
             Main.notifyError('Cannot reopen', 'No session id for this transcript.');
             return;
         }
+        const cwd = s.cwd && GLib.file_test(s.cwd, GLib.FileTest.IS_DIR)
+            ? s.cwd : GLib.get_home_dir();
         try {
-            const launcher = new Gio.SubprocessLauncher({
-                flags: Gio.SubprocessFlags.STDOUT_SILENCE |
-                       Gio.SubprocessFlags.STDERR_SILENCE,
-            });
-            // Sessions are scoped to their project directory.
-            if (s.cwd && GLib.file_test(s.cwd, GLib.FileTest.IS_DIR))
-                launcher.set_cwd(s.cwd);
-            launcher.spawnv([claudeBinary(), '--desktop', '--resume', s.sessionId]);
+            Gio.Subprocess.new([
+                ...TERMINAL_WITH_CWD(cwd),
+                claudeBinary(), '--resume', s.sessionId,
+            ], Gio.SubprocessFlags.NONE);
         } catch (e) {
             Main.notifyError('Could not reopen the session', String(e));
         }
