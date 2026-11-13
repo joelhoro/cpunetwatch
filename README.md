@@ -223,3 +223,26 @@ reopening it in the Claude desktop app.
 Session ids come from the transcript **filename**, which is the session uuid.
 That is more reliable than the `sessionId` record — every transcript is
 uuid-named, but a few carry no `sessionId` line at all.
+
+## Developing without logging out
+
+The shell imports `extension.js` exactly once per session — its loader does
+`await import(extensionJs.get_uri())` with no cache busting and comments that
+"extensions can only be imported once". So edited code cannot be picked up by
+disable/enable, by `reloadExtension`, or by Looking Glass. On Wayland the
+shell cannot be restarted either, which normally leaves logging out.
+
+`make dev-install` works around it: the file the shell imports becomes a small
+stub that dynamically imports `impl-<n>/`. A new directory is a new URI, which
+the ESM cache has never seen, so it genuinely loads fresh code.
+
+```sh
+make dev-install   # once, then log out one final time
+make reload        # thereafter: bumps n, cycles the extension, no logout
+```
+
+`reload` keeps the two most recent impls — the outgoing module stays resident
+in the shell after `disable`, so deleting its files immediately is what leaves
+an extension stuck in `State: ERROR` with orphaned panel actors.
+
+Released bundles contain the real `extension.js`, never the stub.

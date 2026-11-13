@@ -9,7 +9,7 @@ VERSION = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js prochot
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
-.PHONY: all test pack install uninstall preview clean lint stamp
+.PHONY: all test pack install uninstall preview clean lint stamp dev-install reload
 
 all: pack
 
@@ -61,3 +61,38 @@ uninstall:
 
 clean:
 	@rm -rf $(DIST) $(BUILD)
+
+# ---------------------------------------------------------------- dev reload
+#
+# The shell imports extension.js exactly once per session. dev-install puts a
+# stub there that dynamically imports impl-<n>/, so `make reload` can bump n
+# and swap in edited code with no logout. Keeps the two most recent impls:
+# the outgoing module stays resident in the shell after disable.
+
+DEVDIR = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
+
+dev-install: lint
+	@mkdir -p $(DEVDIR)
+	@rm -f $(DEVDIR)/*.js
+	@cp tools/devstub.js $(DEVDIR)/extension.js
+	@cp $(SRC)/metadata.json $(DEVDIR)/metadata.json
+	@cp $(SRC)/stylesheet.css $(DEVDIR)/stylesheet.css
+	@cp $(SRC)/prochot $(DEVDIR)/prochot && chmod +x $(DEVDIR)/prochot
+	@echo 1 > $(DEVDIR)/impl.txt
+	@rm -rf $(DEVDIR)/impl-1 && mkdir -p $(DEVDIR)/impl-1
+	@cp $(SRC)/*.js $(SRC)/metadata.json $(DEVDIR)/impl-1/
+	@echo "dev stub installed. Log out once, then use 'make reload'."
+
+reload: lint
+	@test -f $(DEVDIR)/impl.txt || { echo "run 'make dev-install' first"; exit 1; }
+	@n=$$(cat $(DEVDIR)/impl.txt); next=$$((n+1)); \
+	  rm -rf $(DEVDIR)/impl-$$next && mkdir -p $(DEVDIR)/impl-$$next; \
+	  cp $(SRC)/*.js $(SRC)/metadata.json $(DEVDIR)/impl-$$next/; \
+	  cp $(SRC)/stylesheet.css $(DEVDIR)/stylesheet.css; \
+	  cp $(SRC)/prochot $(DEVDIR)/prochot; chmod +x $(DEVDIR)/prochot; \
+	  echo $$next > $(DEVDIR)/impl.txt; \
+	  gnome-extensions disable $(UUID); sleep 1; \
+	  gnome-extensions enable $(UUID); sleep 1; \
+	  old=$$((next-2)); [ -d $(DEVDIR)/impl-$$old ] && rm -rf $(DEVDIR)/impl-$$old || true; \
+	  echo "reloaded as impl-$$next"; \
+	  gnome-extensions info $(UUID) | grep -E "State|Error" || true
