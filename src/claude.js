@@ -82,7 +82,11 @@ export function addAcc(dst, src) {
 
 /** Total tokens billed-ish: everything that went in, plus what came out. */
 export function totalTokens(u) {
-    return u.input + u.cacheRead + u.cacheWrite + u.output;
+    // A missing day bucket is normal (no activity that day); returning 0 keeps
+    // a formatting helper from throwing into the panel's update path.
+    if (!u)
+        return 0;
+    return (u.input ?? 0) + (u.cacheRead ?? 0) + (u.cacheWrite ?? 0) + (u.output ?? 0);
 }
 
 /**

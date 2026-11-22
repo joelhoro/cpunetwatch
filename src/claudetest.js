@@ -24,13 +24,18 @@ t('corrupt line skipped', parseJsonl('{bad\n{"ok":1}\n').records.length, 1);
 t('blank lines ignored', parseJsonl('\n\n{"x":1}\n').records.length, 1);
 
 print('\n=== usage folding ===');
+// Anchor to LOCAL noon so both records fall on the same local day whatever
+// the runner's offset. Two fixed UTC instants an hour apart straddle local
+// midnight in some zones (UTC-11 among them) and land in separate buckets.
+const noon = new Date(2026, 10, 8, 12, 0);
+const hourLater = new Date(noon.getTime() + 3600_000);
 const st={lastTs:0,branch:null,title:null,titleIsCustom:false,usage:emptyUsage(),byDay:{}};
 foldRecords(st,[
-  {timestamp:'2026-11-08T10:00:00Z', gitBranch:'master',
+  {timestamp: noon.toISOString(), gitBranch:'master',
    message:{usage:{input_tokens:10,output_tokens:5,cache_read_input_tokens:100}}},
   {type:'ai-title', aiTitle:'Auto name'},
   {type:'custom-title', customTitle:'My name'},
-  {timestamp:'2026-11-08T11:00:00Z',
+  {timestamp: hourLater.toISOString(),
    message:{usage:{input_tokens:1,output_tokens:2}}},
 ]);
 t('input summed', st.usage.input, 11);
@@ -38,8 +43,11 @@ t('cache reads counted', st.usage.cacheRead, 100);
 t('output summed', st.usage.output, 7);
 t('branch captured', st.branch, 'master');
 t('custom title wins', st.title, 'My name');
-t('per-day bucket', totalTokens(st.byDay['2026-11-08']), 118);
-t('latest timestamp kept', st.lastTs, Date.parse('2026-11-08T11:00:00Z'));
+const bucketKey = localDay(noon.getTime());
+t('per-day bucket', totalTokens(st.byDay[bucketKey]), 118);
+t('exactly one day bucket', Object.keys(st.byDay).length, 1);
+t('missing bucket totals zero, does not throw', totalTokens(st.byDay['1999-01-01']), 0);
+t('latest timestamp kept', st.lastTs, hourLater.getTime());
 
 print('\n=== ai-title does not clobber a custom one ===');
 const st2={lastTs:0,branch:null,title:null,titleIsCustom:false,usage:emptyUsage(),byDay:{}};
@@ -52,10 +60,26 @@ t('thousands', formatTokens(1416), '1k');
 t('small', formatTokens(42), '42');
 
 print('\n=== local-day bucketing (the UTC rollover bug) ===');
-// 21:30 local on Nov 8 is already Nov 9 in UTC
-const evening = new Date(2026, 10, 8, 21, 30).getTime();
-t('local day, not UTC day', localDay(evening), '2026-11-08');
-t('UTC slice would have said', new Date(evening).toISOString().slice(0,10), '2026-11-09');
+// Assert the invariant, not a timezone-specific string: localDay must follow
+// the LOCAL calendar components. A runner on UTC cannot exhibit the bug at
+// all, so pinning '2026-11-09' here made the test fail in CI while the code
+// under test was correct.
+// Pick a local hour that actually crosses the UTC date line for this
+// runner's offset: west of UTC it is late evening, east of UTC early morning.
+const offMin = new Date(2026, 10, 8, 12, 0).getTimezoneOffset();
+const ev = offMin > 0
+    ? new Date(2026, 10, 8, 23, 30)
+    : new Date(2026, 10, 8, 0, 30);
+const pad = n => String(n).padStart(2, '0');
+const wantLocal = `${ev.getFullYear()}-${pad(ev.getMonth()+1)}-${pad(ev.getDate())}`;
+t('local day follows local calendar components', localDay(ev.getTime()), wantLocal);
+const utcSlice = ev.toISOString().slice(0,10);
+if (ev.getTimezoneOffset() === 0)
+    print('  (machine is on UTC -- local and UTC dates coincide, nothing to contrast)');
+else
+    t('and differs from the naive UTC slice where offsets apply',
+      utcSlice !== wantLocal, true);
+const evening = ev.getTime();
 const st3={lastTs:0,branch:null,title:null,titleIsCustom:false,usage:emptyUsage(),byDay:{}};
 foldRecords(st3,[{timestamp:new Date(evening).toISOString(),
                   message:{usage:{input_tokens:7}}}]);
