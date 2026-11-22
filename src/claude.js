@@ -149,7 +149,7 @@ function newState(slug, path) {
         slug, path, project, worktree,
         title: null, titleIsCustom: false, branch: null,
         sessionId: sessionIdFromPath(path), cwd: null,
-        offset: 0, carry: '', lastTs: 0,
+        offset: 0, lastTs: 0,
         usage: emptyUsage(), byDay: {},
     };
 }
@@ -221,8 +221,11 @@ export function scanSessions(root, cache, now = Date.now()) {
 
         const tail = bytes.slice(state.offset);
         const text = new TextDecoder().decode(tail);
-        const {records, leftover} = parseJsonl(text, state.carry);
-        state.carry = leftover;
+        const {records, leftover} = parseJsonl(text);
+        // Rewind to just before the truncated final line rather than saving
+        // it: the next pass re-reads those bytes anyway, so carrying them as
+        // well both double-counts and corrupts the parse if the tail changed
+        // to something other than a continuation of what we saw.
         state.offset = size - new TextEncoder().encode(leftover).length;
         foldRecords(state, records);
     }
