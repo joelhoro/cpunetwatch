@@ -565,9 +565,11 @@ class ThrottleIndicator extends PanelMenu.Button {
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.menu.addMenuItem(sectionLabel('Detail'));
+        this._rowProfile = new DetailRow('Power profile', '🔋');
         this._rowTemp = new DetailRow('Package temperature', '🔥');
         this._rowRange = new DetailRow('Clock range', '🔆');
         this._rowSource = new DetailRow('Sensor source', '🔬');
+        this.menu.addMenuItem(this._rowProfile);
         this.menu.addMenuItem(this._rowTemp);
         this.menu.addMenuItem(this._rowRange);
         this.menu.addMenuItem(this._rowSource);
@@ -670,6 +672,9 @@ class ThrottleIndicator extends PanelMenu.Button {
         }
         this._allClear.visible = !anyAsserted && s.haveThrottleData;
 
+        this._rowProfile.setValue(s.profile ?? 'unknown',
+            s.profile === 'performance' ? 'good'
+                : s.profile ? 'warn' : 'dim');
         this._rowTemp.setValue(
             s.tempC === null ? 'unavailable' : `${s.tempC.toFixed(0)} °C`,
             s.tempC === null ? 'dim'

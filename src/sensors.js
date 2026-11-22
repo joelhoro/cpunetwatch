@@ -207,6 +207,31 @@ export class SensorPaths {
 /**
  * One poll. Returns a plain object; never throws.
  */
+/** Trimmed contents of a sysfs file, or null. */
+export function readStr(path) {
+    try {
+        const [ok, bytes] = imports.gi.GLib.file_get_contents(path);
+        return ok ? new TextDecoder().decode(bytes).trim() || null : null;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * A power profile other than 'performance' caps the clock well below the
+ * rated ceiling. That is not a fault, but "Running normally" at 1.9 GHz is
+ * unhelpful -- name the cause so it is self-diagnosing.
+ */
+export function profileNote(s) {
+    if (!s.profile || s.profile === 'performance')
+        return null;
+    const frac = s.curKhz && s.maxKhz ? s.curKhz / s.maxKhz : 1;
+    if (frac > 0.75)
+        return null;
+    return `Power profile is '${s.profile}', which caps the clock. ` +
+           'Switch to performance for full speed.';
+}
+
 export function sample(paths) {
     let curKhz = null;
     for (const p of paths.curFreqPaths) {
@@ -251,6 +276,8 @@ export function sample(paths) {
         tempC,
         reasons,
         statusBit,
+        profile: readStr('/sys/firmware/acpi/platform_profile'),
+        epp: readStr('/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference'),
         tempLabel: paths.tempLabel,
         haveThrottleData: paths.throttleDir !== null,
     };
@@ -354,7 +381,11 @@ export function classify(s) {
         };
     }
 
-    return {state: STATE.NORMAL, verdict: 'Running normally.'};
+    const note = profileNote(s);
+    return {
+        state: STATE.NORMAL,
+        verdict: note ?? 'Running normally.',
+    };
 }
 
 export function formatGhz(khz) {

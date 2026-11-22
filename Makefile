@@ -92,7 +92,11 @@ reload: lint
 	  cp $(SRC)/prochot $(DEVDIR)/prochot; chmod +x $(DEVDIR)/prochot; \
 	  echo $$next > $(DEVDIR)/impl.txt; \
 	  gnome-extensions disable $(UUID); sleep 1; \
-	  gnome-extensions enable $(UUID); sleep 1; \
+	  gnome-extensions enable $(UUID); \
+	  for i in 1 2 3 4 5 6; do \
+	    sleep 1; \
+	    gnome-extensions info $(UUID) >/dev/null 2>&1 && break; \
+	  done; \
 	  old=$$((next-2)); [ -d $(DEVDIR)/impl-$$old ] && rm -rf $(DEVDIR)/impl-$$old || true; \
 	  echo "reloaded as impl-$$next"; \
 	  gnome-extensions info $(UUID) | grep -E "State|Error" || true

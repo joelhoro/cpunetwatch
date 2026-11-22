@@ -5,7 +5,7 @@
  * because a new extension cannot be loaded into a running Wayland session.
  */
 
-import {SensorPaths, sample, classify, formatGhz, STATE} from './sensors.js';
+import {profileNote, SensorPaths, sample, classify, formatGhz, STATE} from './sensors.js';
 
 let failures = 0;
 const check = (name, got, want) => {
@@ -98,6 +98,18 @@ check('unreadable cpufreq',
 check('formatGhz', formatGhz(5053752), '5.1 GHz');
 check('formatGhz sub-GHz uses MHz', formatGhz(400000), '400 MHz');
 check('formatGhz null', formatGhz(null), '--');
+
+
+print('\n=== power profile note ===');
+{
+    const pn = (profile, cur) => profileNote({profile, curKhz: cur, maxKhz: 5400000});
+    check('balanced and slow names the profile',
+        (pn('balanced', 1900000) || '').includes("'balanced'"), true);
+    check('performance gives no note', pn('performance', 1900000), null);
+    check('balanced near the ceiling gives no note', pn('balanced', 4800000), null);
+    check('quiet and slow names it', (pn('quiet', 1200000) || '').includes("'quiet'"), true);
+    check('missing profile data gives no note', pn(null, 1900000), null);
+}
 
 print(`\n${failures === 0 ? 'ALL TESTS PASSED' : `${failures} TEST(S) FAILED`}`);
 if (failures > 0)
