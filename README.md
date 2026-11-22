@@ -257,9 +257,15 @@ Released bundles contain the real `extension.js`, never the stub.
 
 ## Claude Usage
 
-Fifth indicator: percentage of your Claude limits consumed. Panel shows the
-worst of the two; the menu breaks out session, weekly (all models) and
-weekly (per model), each with its reset time, plus a history graph.
+Fifth indicator: percentage of your Claude limits consumed. The panel shows
+all three at once — session, weekly (all models), weekly (per model) — in a
+fixed order so position alone tells you which is which:
+
+    18·11·2%
+
+Clicking breaks them out with their reset times, names the model the
+per-model cap applies to, and plots a history graph. Colour follows the worst
+of the three.
 
 Source is `claude -p "/usage"`, which the CLI answers locally. Polling it is
 free: an invocation writes an 11-line transcript with **zero usage records and

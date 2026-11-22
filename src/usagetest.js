@@ -1,5 +1,5 @@
 import GLib from 'gi://GLib';
-import {parseUsage, classifyUsage, usageCommand, USAGE_STATE,
+import {panelText, parseUsage, classifyUsage, usageCommand, USAGE_STATE,
         WARN_PCT, CRIT_PCT} from './usage.js';
 let pass=0,fail=0;
 const t=(n,g,w)=>{const ok=JSON.stringify(g)===JSON.stringify(w);
@@ -42,6 +42,13 @@ t('unparseable -> unknown', classifyUsage(parseUsage('garbage')).state, USAGE_ST
 t('null -> unknown', classifyUsage(null).state, USAGE_STATE.UNKNOWN);
 t('prose mentioning percent is ignored',
   parseUsage('You have used 50% of something else\n').rows.length, 0);
+
+print('\n=== panel text: all three numbers ===');
+t('three limits', panelText(u), '18\u00b711\u00b72%');
+t('missing model row still works',
+  panelText({ok:true,session:{pct:18},week:{pct:11},model:null}), '18\u00b711%');
+t('unparsed -> placeholder', panelText(parseUsage('')), '--');
+t('null -> placeholder', panelText(null), '--');
 
 print('\n=== command shape ===');
 t('invokes the slash command', usageCommand('/bin/claude'), ['/bin/claude','-p','/usage']);

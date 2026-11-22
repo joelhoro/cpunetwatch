@@ -35,7 +35,7 @@ import {
     scanSessions, totalTokens, formatTokens, sessionLabel, ACTIVE_WINDOW_MS,
 } from './claude.js';
 import {
-    USAGE_STATE, usageCommand, parseUsage, classifyUsage,
+    USAGE_STATE, usageCommand, parseUsage, classifyUsage, panelText,
 } from './usage.js';
 
 /* gnome-shell's PATH does not include ~/.local/bin, so resolve explicitly. */
@@ -96,12 +96,13 @@ class DetailRow extends PopupMenu.PopupBaseMenuItem {
             style_class: 'cputhr-glyph',
             y_align: Clutter.ActorAlign.CENTER,
         }));
-        this.add_child(new St.Label({
+        this._key = new St.Label({
             text: keyText,
             style_class: 'cputhr-row-key',
             x_expand: true,
             y_align: Clutter.ActorAlign.CENTER,
-        }));
+        });
+        this.add_child(this._key);
         this._value = new St.Label({
             text: '--',
             style_class: 'cputhr-row-value pill pill-dim',
@@ -112,6 +113,8 @@ class DetailRow extends PopupMenu.PopupBaseMenuItem {
     }
 
     /** tone: 'good' | 'warn' | 'bad' | 'dim' */
+    setKey(text) { this._key.text = text; }
+
     setValue(text, tone = 'dim') {
         this._value.text = text;
         const cls = `pill-${tone}`;
@@ -1721,7 +1724,7 @@ class UsageIndicator extends PanelMenu.Button {
             this._series.push(Date.now(), pct,
                 state === USAGE_STATE.CRITICAL ? FLAG_FAULT : 0);
 
-        this._label.text = pct !== null ? `${pct}%` : '--';
+        this._label.text = panelText(u);
 
         let cls = style.cls;
         const bad = state === USAGE_STATE.CRITICAL;
@@ -1769,8 +1772,9 @@ class UsageIndicator extends PanelMenu.Button {
         put(this._rowSession, u?.session);
         put(this._rowWeek, u?.week);
         put(this._rowModel, u?.model);
+        // name the model the per-model cap applies to, e.g. "Week (Fable)"
         if (u?.model)
-            this._rowModel.setKey?.(u.model.label);
+            this._rowModel.setKey(u.model.label.replace(/^Current /, ''));
 
         this._rowSessionReset.setValue(u?.session?.resets ?? '--', 'dim');
         this._rowWeekReset.setValue(u?.week?.resets ?? '--', 'dim');

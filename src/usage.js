@@ -80,3 +80,18 @@ export function classifyUsage(u) {
 
     return {state, verdict, worst};
 }
+
+/**
+ * Compact panel text: every limit's percentage, worst-first order preserved
+ * as session / week / per-model so the positions stay stable to read at a
+ * glance. "18·11·2%" rather than three separate "%" signs, which is too wide
+ * for a crowded bar.
+ */
+export function panelText(u) {
+    if (!u || !u.ok)
+        return '--';
+    const parts = [u.session, u.week, u.model]
+        .filter(Boolean)
+        .map(r => String(r.pct));
+    return parts.length ? `${parts.join('\u00b7')}%` : '--';
+}
