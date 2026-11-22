@@ -6,7 +6,7 @@ BUILD   = build
 # metadata.json at pack time so the published label cannot drift from the
 # release, which it silently did across three tags.
 VERSION = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
-EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js usage.js prochot
+EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js usage.js prochot claude-symbolic.svg claude-colour.svg
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
 .PHONY: all test pack install uninstall preview clean lint stamp dev-install reload
@@ -78,18 +78,20 @@ dev-install: lint
 	@cp $(SRC)/metadata.json $(DEVDIR)/metadata.json
 	@cp $(SRC)/stylesheet.css $(DEVDIR)/stylesheet.css
 	@cp $(SRC)/prochot $(DEVDIR)/prochot && chmod +x $(DEVDIR)/prochot
+	@cp $(SRC)/*.svg $(DEVDIR)/
 	@echo 1 > $(DEVDIR)/impl.txt
 	@rm -rf $(DEVDIR)/impl-1 && mkdir -p $(DEVDIR)/impl-1
-	@cp $(SRC)/*.js $(SRC)/metadata.json $(DEVDIR)/impl-1/
+	@cp $(SRC)/*.js $(SRC)/*.svg $(SRC)/metadata.json $(DEVDIR)/impl-1/
 	@echo "dev stub installed. Log out once, then use 'make reload'."
 
 reload: lint
 	@test -f $(DEVDIR)/impl.txt || { echo "run 'make dev-install' first"; exit 1; }
 	@n=$$(cat $(DEVDIR)/impl.txt); next=$$((n+1)); \
 	  rm -rf $(DEVDIR)/impl-$$next && mkdir -p $(DEVDIR)/impl-$$next; \
-	  cp $(SRC)/*.js $(SRC)/metadata.json $(DEVDIR)/impl-$$next/; \
+	  cp $(SRC)/*.js $(SRC)/*.svg $(SRC)/metadata.json $(DEVDIR)/impl-$$next/; \
 	  cp $(SRC)/stylesheet.css $(DEVDIR)/stylesheet.css; \
 	  cp $(SRC)/prochot $(DEVDIR)/prochot; chmod +x $(DEVDIR)/prochot; \
+	  cp $(SRC)/*.svg $(DEVDIR)/; \
 	  echo $$next > $(DEVDIR)/impl.txt; \
 	  gnome-extensions disable $(UUID); sleep 1; \
 	  gnome-extensions enable $(UUID); \

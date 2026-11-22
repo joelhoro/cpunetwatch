@@ -273,3 +273,19 @@ zero tokens**, so the widget does not consume the quota it reports. It takes
 about 3 s, and is polled every 5 minutes and on menu open.
 
 Amber at 70%, red with a notification at 90%.
+
+## The Claude mark
+
+Both Claude indicators use a bundled SVG of the Claude burst rather than a
+generic theme icon. Two variants ship:
+
+| File | Behaviour |
+|---|---|
+| `claude-symbolic.svg` | `currentColor` — inherits the panel colour and tints amber/red with state |
+| `claude-colour.svg` | fixed `#D97757` — always the brand orange, ignores state |
+
+The symbolic one is the default, so the icon still signals warnings like the
+others do. Swap `CLAUDE_MARK` in `extension.js` to use the colour variant.
+
+The `-symbolic` suffix is load-bearing: it is what makes St recolour the icon
+from CSS rather than rendering it as-is.

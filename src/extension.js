@@ -57,10 +57,10 @@ const BD_STATE_FILE = '/run/cpunetwatch-bdprochot';
 const TIGER_HOST = 'tiger';
 const TIGER_POLL_SECONDS = 60;
 const TIGER_PANEL_ICON = 'network-server-symbolic';
-const CLAUDE_PANEL_ICON = 'chat-symbolic';
+const CLAUDE_MARK = 'claude-symbolic.svg';
 const CLAUDE_POLL_SECONDS = 30;
 const USAGE_POLL_SECONDS = 300;
-const USAGE_PANEL_ICON = 'speedometer-symbolic';
+
 const TERMINAL = ['gnome-terminal', '--'];
 const TERMINAL_WITH_CWD = cwd =>
     ['gnome-terminal', `--working-directory=${cwd}`, '--'];
@@ -411,9 +411,15 @@ class ActionRow extends PopupMenu.PopupBaseMenuItem {
 /** Shared panel box: identity icon + label. The icon carries state by colour. */
 function buildPanelBox(labelClass, iconClass, iconName) {
     const box = new St.BoxLayout({style_class: 'panel-status-menu-box'});
+    // An absolute path loads a bundled SVG; anything else is a theme name.
+    // The -symbolic suffix is what makes St recolour it with the CSS colour,
+    // so the bundled mark still tints amber/red with state.
+    const iconProps = iconName.startsWith('/')
+        ? {gicon: Gio.icon_new_for_string(iconName)}
+        : {icon_name: iconName};
     const icon = new St.Icon({
         style_class: `system-status-icon ${iconClass}`,
-        icon_name: iconName,
+        ...iconProps,
         y_align: Clutter.ActorAlign.CENTER,
     });
     const label = new St.Label({
@@ -1438,8 +1444,10 @@ class TigerIndicator extends PanelMenu.Button {
 
 const ClaudeIndicator = GObject.registerClass(
 class ClaudeIndicator extends PanelMenu.Button {
-    _init() {
+    _init(extPath) {
         super._init(0.5, 'Claude Sessions', false);
+
+        this._extPath = extPath;
 
         this._root = GLib.build_filenamev(
             [GLib.get_home_dir(), '.claude', 'projects']);
@@ -1447,7 +1455,8 @@ class ClaudeIndicator extends PanelMenu.Button {
         this._series = loadSeries('claude.json');
         this._rows = [];
 
-        const p = buildPanelBox('netw-panel-label', 'netw-icon', CLAUDE_PANEL_ICON);
+        const p = buildPanelBox('netw-panel-label', 'netw-icon',
+            GLib.build_filenamev([extPath, CLAUDE_MARK]));
         this._icon = p.icon;
         this._label = p.label;
         this._labelCls = new ClassSwapper(p.label);
@@ -1606,8 +1615,10 @@ const USAGE_STYLE = {
 
 const UsageIndicator = GObject.registerClass(
 class UsageIndicator extends PanelMenu.Button {
-    _init() {
+    _init(extPath) {
         super._init(0.5, 'Claude Usage', false);
+
+        this._extPath = extPath;
 
         this._cancellable = new Gio.Cancellable();
         this._busy = false;
@@ -1615,7 +1626,8 @@ class UsageIndicator extends PanelMenu.Button {
         this._notified = false;
         this._series = loadSeries('usage.json');
 
-        const p = buildPanelBox('netw-panel-label', 'netw-icon', USAGE_PANEL_ICON);
+        const p = buildPanelBox('netw-panel-label', 'netw-icon',
+            GLib.build_filenamev([extPath, CLAUDE_MARK]));
         this._icon = p.icon;
         this._label = p.label;
         this._labelCls = new ClassSwapper(p.label);
@@ -1813,9 +1825,9 @@ export default class CpuThrottleWatchExtension extends Extension {
         Main.panel.addToStatusArea(`${this.uuid}-net`, this._net, 1, 'right');
         this._tiger = new TigerIndicator();
         Main.panel.addToStatusArea(`${this.uuid}-tiger`, this._tiger, 2, 'right');
-        this._claude = new ClaudeIndicator();
+        this._claude = new ClaudeIndicator(this.path);
         Main.panel.addToStatusArea(`${this.uuid}-claude`, this._claude, 3, 'right');
-        this._usage = new UsageIndicator();
+        this._usage = new UsageIndicator(this.path);
         Main.panel.addToStatusArea(`${this.uuid}-usage`, this._usage, 4, 'right');
     }
 
