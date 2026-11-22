@@ -254,3 +254,16 @@ in the shell after `disable`, so deleting its files immediately is what leaves
 an extension stuck in `State: ERROR` with orphaned panel actors.
 
 Released bundles contain the real `extension.js`, never the stub.
+
+## Claude Usage
+
+Fifth indicator: percentage of your Claude limits consumed. Panel shows the
+worst of the two; the menu breaks out session, weekly (all models) and
+weekly (per model), each with its reset time, plus a history graph.
+
+Source is `claude -p "/usage"`, which the CLI answers locally. Polling it is
+free: an invocation writes an 11-line transcript with **zero usage records and
+zero tokens**, so the widget does not consume the quota it reports. It takes
+about 3 s, and is polled every 5 minutes and on menu open.
+
+Amber at 70%, red with a notification at 90%.

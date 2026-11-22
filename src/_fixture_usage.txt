@@ -1,0 +1,27 @@
+You are currently using your subscription to power your Claude Code usage
+
+Current session: 18% used · resets Nov 22, 7:40pm (America/New_York)
+Current week (all models): 11% used · resets Nov 28, 6pm (America/New_York)
+Current week (Fable): 2% used · resets Nov 28, 6pm (America/New_York)
+
+What's contributing to your usage?
+Approximate · sessions on this machine only · shares overlap
+
+Last 24h · 2096 requests · 63 sessions
+  84%  Start fresh when you switch tasks · run /clear
+  64%  Review sessions active over many hours · whole sessions with requests in 8 or more separate hours
+  20%  Check which model "general-purpose" subagents use
+  15%  Run fewer sessions at once · up to 13 at once
+  Top skills: /ui-conventions 6%, /style-researcher-app 2%, /run-researcher-app 1%, /artifact-diagramming 1%
+  Top subagents: general-purpose 20%
+  Top MCP servers: Claude Browser 26%, researcher 1%
+
+Last 7d · 9681 requests · 429 sessions
+  88%  Start fresh when you switch tasks · run /clear
+  80%  Check which models your subagents use · share covers whole sessions, not only subagents
+  80%  Review sessions active over many hours · whole sessions with requests in 8 or more separate hours
+  26%  Run fewer sessions at once · up to 23 at once
+  16%  See what fills your context · run /context
+  Top skills: /tiger-horowitz-deploy 4%, /ui-conventions 2%, /artifact-design 1%, /no-random-ui-copy 1%
+  Top subagents: general-purpose 5%
+  Top MCP servers: Claude Browser 19%, researcher 1%

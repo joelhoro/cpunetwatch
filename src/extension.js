@@ -34,6 +34,9 @@ import {
 import {
     scanSessions, totalTokens, formatTokens, sessionLabel, ACTIVE_WINDOW_MS,
 } from './claude.js';
+import {
+    USAGE_STATE, usageCommand, parseUsage, classifyUsage,
+} from './usage.js';
 
 /* gnome-shell's PATH does not include ~/.local/bin, so resolve explicitly. */
 function claudeBinary() {
@@ -56,6 +59,8 @@ const TIGER_POLL_SECONDS = 60;
 const TIGER_PANEL_ICON = 'network-server-symbolic';
 const CLAUDE_PANEL_ICON = 'chat-symbolic';
 const CLAUDE_POLL_SECONDS = 30;
+const USAGE_POLL_SECONDS = 300;
+const USAGE_PANEL_ICON = 'speedometer-symbolic';
 const TERMINAL = ['gnome-terminal', '--'];
 const TERMINAL_WITH_CWD = cwd =>
     ['gnome-terminal', `--working-directory=${cwd}`, '--'];
@@ -1578,6 +1583,222 @@ class ClaudeIndicator extends PanelMenu.Button {
     }
 });
 
+/* ------------------------------------------------------------------ *
+ * Claude subscription usage
+ * ------------------------------------------------------------------ */
+
+const USAGE_EMOJI = {
+    [USAGE_STATE.OK]:       '✅',
+    [USAGE_STATE.WARN]:     '🚦',
+    [USAGE_STATE.CRITICAL]: '🚨',
+    [USAGE_STATE.UNKNOWN]:  '🔎',
+};
+
+const USAGE_STYLE = {
+    [USAGE_STATE.OK]:       {cls: 'netw-normal',  iconCls: 'ico-plain'},
+    [USAGE_STATE.WARN]:     {cls: 'netw-warn',    iconCls: 'ico-warn'},
+    [USAGE_STATE.CRITICAL]: {cls: 'netw-fault',   iconCls: 'ico-bad'},
+    [USAGE_STATE.UNKNOWN]:  {cls: 'netw-unknown', iconCls: 'ico-dim'},
+};
+
+const UsageIndicator = GObject.registerClass(
+class UsageIndicator extends PanelMenu.Button {
+    _init() {
+        super._init(0.5, 'Claude Usage', false);
+
+        this._cancellable = new Gio.Cancellable();
+        this._busy = false;
+        this._blink = false;
+        this._notified = false;
+        this._series = loadSeries('usage.json');
+
+        const p = buildPanelBox('netw-panel-label', 'netw-icon', USAGE_PANEL_ICON);
+        this._icon = p.icon;
+        this._label = p.label;
+        this._labelCls = new ClassSwapper(p.label);
+        this._iconCls = new ClassSwapper(p.icon);
+        this.add_child(p.box);
+
+        this._verdictGlyph = new St.Label({
+            text: '', style_class: 'cputhr-verdict-glyph',
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._verdict = new St.Label({
+            text: 'Reading usage…', style_class: 'cputhr-verdict',
+        });
+        this._verdict.clutter_text.line_wrap = true;
+        this._verdict.clutter_text.line_wrap_mode = Pango.WrapMode.WORD_CHAR;
+        this._verdict.clutter_text.ellipsize = Pango.EllipsizeMode.NONE;
+        this._verdictCls = new ClassSwapper(this._verdict);
+
+        const vi = new PopupMenu.PopupBaseMenuItem({reactive: false, can_focus: false});
+        vi.add_child(this._verdictGlyph);
+        vi.add_child(this._verdict);
+        this.menu.addMenuItem(vi);
+
+        this._hero = new HeroReadout('%');
+        this.menu.addMenuItem(this._hero);
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this._graphSection = new GraphSection('%', [0.95, 0.76, 0.44],
+            v => `${v.toFixed(0)}`, {floorZero: true});
+        this._graphSection.attach(this._series, [0, 100]);
+        this.menu.addMenuItem(this._graphSection);
+        this.menu.connect('open-state-changed', (m, open) => {
+            if (open) {
+                this._graphSection.refresh();
+                this._poll();
+            }
+        });
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(sectionLabel('Limits'));
+        this._rowSession = new DetailRow('Session', '⏳');
+        this._rowWeek = new DetailRow('Week, all models', '📅');
+        this._rowModel = new DetailRow('Week, per model', '🧮');
+        this.menu.addMenuItem(this._rowSession);
+        this.menu.addMenuItem(this._rowWeek);
+        this.menu.addMenuItem(this._rowModel);
+
+        this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
+        this.menu.addMenuItem(sectionLabel('Resets'));
+        this._rowSessionReset = new DetailRow('Session resets', '🔄');
+        this._rowWeekReset = new DetailRow('Week resets', '🔄');
+        this.menu.addMenuItem(this._rowSessionReset);
+        this.menu.addMenuItem(this._rowWeekReset);
+
+        this._poll();
+        this._timeoutId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_LOW, USAGE_POLL_SECONDS, () => {
+                this._poll();
+                return GLib.SOURCE_CONTINUE;
+            });
+        this._saveId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_LOW, SAVE_SECONDS, () => {
+                if (this._series.dirty)
+                    saveSeries('usage.json', this._series);
+                return GLib.SOURCE_CONTINUE;
+            });
+    }
+
+    _poll() {
+        if (this._busy)
+            return;
+        this._busy = true;
+        let proc;
+        try {
+            proc = Gio.Subprocess.new(usageCommand(claudeBinary()),
+                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+        } catch {
+            this._busy = false;
+            this._render(null);
+            return;
+        }
+        this._proc = proc;
+        proc.communicate_utf8_async(null, this._cancellable, (pr, res) => {
+            this._busy = false;
+            this._proc = null;
+            let out = '';
+            try {
+                [, out] = pr.communicate_utf8_finish(res);
+            } catch {
+                if (!this._cancellable.is_cancelled())
+                    this._render(null);
+                return;
+            }
+            if (this._cancellable.is_cancelled())
+                return;
+            this._render(parseUsage(out));
+        });
+    }
+
+    _render(u) {
+        const {state, verdict, worst} = classifyUsage(u);
+        const style = USAGE_STYLE[state] ?? USAGE_STYLE[USAGE_STATE.UNKNOWN];
+        const pct = worst ? worst.pct : null;
+
+        if (pct !== null)
+            this._series.push(Date.now(), pct,
+                state === USAGE_STATE.CRITICAL ? FLAG_FAULT : 0);
+
+        this._label.text = pct !== null ? `${pct}%` : '--';
+
+        let cls = style.cls;
+        const bad = state === USAGE_STATE.CRITICAL;
+        if (bad) {
+            this._blink = !this._blink;
+            if (this._blink)
+                cls = 'netw-fault-alt';
+        } else {
+            this._blink = false;
+        }
+        this._labelCls.set(cls);
+        this._iconCls.set(style.iconCls);
+
+        this._verdict.text = verdict;
+        this._verdictGlyph.text = USAGE_EMOJI[state] ?? '';
+        this._verdictCls.set(
+            bad ? 'cputhr-verdict-fault'
+                : state === USAGE_STATE.WARN ? 'cputhr-verdict-warn'
+                    : state === USAGE_STATE.OK ? 'cputhr-verdict-ok'
+                        : 'cputhr-verdict-warn');
+
+        this._hero.setBadge(USAGE_EMOJI[state] ?? '');
+        if (pct !== null) {
+            this._hero.setNumber(String(pct),
+                pct >= 90 ? 'cputhr-hero-bad'
+                    : pct >= 70 ? 'cputhr-hero-warn' : 'cputhr-hero-ok');
+            this._hero.setUnit('% used');
+            this._hero.setSub(worst.label.toLowerCase());
+            this._hero.setFill(pct / 100,
+                pct >= 90 ? 'cputhr-meter-fill-bad'
+                    : pct >= 70 ? 'cputhr-meter-fill-warn' : null);
+            this._hero.setCaption(worst.resets ? `resets ${worst.resets}` : '');
+        } else {
+            this._hero.setNumber('--', 'cputhr-hero-bad');
+            this._hero.setUnit('');
+            this._hero.setSub('usage unavailable');
+            this._hero.setFill(0, 'cputhr-meter-fill-bad');
+            this._hero.setCaption('');
+        }
+
+        const tone = v => v >= 90 ? 'bad' : v >= 70 ? 'warn' : 'good';
+        const put = (row, r) => r
+            ? row.setValue(`${r.pct}%`, tone(r.pct))
+            : row.setValue('--', 'dim');
+        put(this._rowSession, u?.session);
+        put(this._rowWeek, u?.week);
+        put(this._rowModel, u?.model);
+        if (u?.model)
+            this._rowModel.setKey?.(u.model.label);
+
+        this._rowSessionReset.setValue(u?.session?.resets ?? '--', 'dim');
+        this._rowWeekReset.setValue(u?.week?.resets ?? '--', 'dim');
+
+        if (bad) {
+            if (!this._notified) {
+                this._notified = true;
+                Main.notifyError('Claude usage is nearly exhausted', verdict);
+            }
+        } else if (state === USAGE_STATE.OK) {
+            this._notified = false;
+        }
+    }
+
+    destroy() {
+        for (const id of ['_timeoutId', '_saveId']) {
+            if (this[id]) {
+                GLib.Source.remove(this[id]);
+                this[id] = null;
+            }
+        }
+        saveSeries('usage.json', this._series);
+        this._cancellable.cancel();
+        try { this._proc?.force_exit(); } catch { /* already gone */ }
+        super.destroy();
+    }
+});
+
 /* ------------------------------------------------------------------ */
 
 export default class CpuThrottleWatchExtension extends Extension {
@@ -1590,6 +1811,8 @@ export default class CpuThrottleWatchExtension extends Extension {
         Main.panel.addToStatusArea(`${this.uuid}-tiger`, this._tiger, 2, 'right');
         this._claude = new ClaudeIndicator();
         Main.panel.addToStatusArea(`${this.uuid}-claude`, this._claude, 3, 'right');
+        this._usage = new UsageIndicator();
+        Main.panel.addToStatusArea(`${this.uuid}-usage`, this._usage, 4, 'right');
     }
 
     disable() {
@@ -1601,5 +1824,7 @@ export default class CpuThrottleWatchExtension extends Extension {
         this._tiger = null;
         this._claude?.destroy();
         this._claude = null;
+        this._usage?.destroy();
+        this._usage = null;
     }
 }

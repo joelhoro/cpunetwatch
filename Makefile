@@ -6,7 +6,7 @@ BUILD   = build
 # metadata.json at pack time so the published label cannot drift from the
 # release, which it silently did across three tags.
 VERSION = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
-EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js prochot
+EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js usage.js prochot
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
 .PHONY: all test pack install uninstall preview clean lint stamp dev-install reload
@@ -14,7 +14,7 @@ INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 all: pack
 
 test:
-	@for t in selftest nettest histtest drawtest tigertest claudetest; do \
+	@for t in selftest nettest histtest drawtest tigertest claudetest usagetest; do \
 	  printf '%-10s ' $$t; \
 	  gjs -m $(SRC)/$$t.js 2>&1 | tail -1; \
 	done
