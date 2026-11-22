@@ -20,11 +20,21 @@ jobs:
       - name: Unit tests
         run: |
           set -e
+          fail=0
           for t in selftest nettest histtest drawtest tigertest claudetest usagetest; do
-            out=$(gjs -m src/$t.js 2>&1)
-            echo "$out" | tail -3
-            echo "$out" | grep -q "ALL TESTS PASSED" || { echo "FAILED: $t"; exit 1; }
+            out=$(gjs -m src/$t.js 2>&1) || true
+            if echo "$out" | grep -q "ALL TESTS PASSED"; then
+              echo "$out" | tail -1
+            else
+              echo "::group::$t FAILED - full output"
+              echo "$out"
+              echo "::endgroup::"
+              echo "::error::$t failed"
+              echo "$out" | grep -E "FAIL" || true
+              fail=1
+            fi
           done
+          exit $fail
 
   release:
     needs: test
