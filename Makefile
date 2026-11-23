@@ -9,7 +9,7 @@ VERSION = $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
 EXTRA   = sensors.js net.js history.js draw.js graph.js tiger.js claude.js usage.js prochot claude-symbolic.svg claude-colour.svg
 INSTALL = $(HOME)/.local/share/gnome-shell/extensions/$(UUID)
 
-.PHONY: all test pack install uninstall preview clean lint stamp dev-install reload
+.PHONY: all test test-gate pack install uninstall preview clean lint stamp dev-install reload
 
 all: pack
 
@@ -39,7 +39,7 @@ stamp:
 	  p.write_text(json.dumps(m,indent=2)+chr(10)); \
 	  print('  stamped version-name =',v)"
 
-pack: lint stamp
+pack: lint test-gate stamp
 	@rm -f $(DIST)/$(UUID).shell-extension.zip
 	@if command -v gnome-extensions >/dev/null 2>&1; then \
 	  gnome-extensions pack $(BUILD) --force -o $(DIST) \
@@ -102,3 +102,13 @@ reload: lint
 	  old=$$((next-2)); [ -d $(DEVDIR)/impl-$$old ] && rm -rf $(DEVDIR)/impl-$$old || true; \
 	  echo "reloaded as impl-$$next"; \
 	  gnome-extensions info $(UUID) | grep -E "State|Error" || true
+
+# Hard gate: pack (and therefore install and any release build) refuses to
+# produce a bundle while any suite is red.
+test-gate:
+	@fail=0; \
+	for t in selftest nettest histtest drawtest tigertest claudetest usagetest; do \
+	  out=$$(gjs -m $(SRC)/$$t.js 2>&1); \
+	  echo "$$out" | grep -q "ALL TESTS PASSED" || { echo "  RED: $$t"; echo "$$out" | grep FAIL; fail=1; }; \
+	done; \
+	[ $$fail -eq 0 ] || { echo "refusing to pack with failing tests"; exit 1; }
