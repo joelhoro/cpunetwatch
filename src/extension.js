@@ -38,6 +38,22 @@ import {
     USAGE_STATE, usageCommand, parseUsage, classifyUsage, panelText,
 } from './usage.js';
 
+/**
+ * Spawn with stdin pinned to /dev/null.
+ *
+ * Gio.Subprocess otherwise inherits gnome-shell's stdin, which never reaches
+ * EOF. A child that reads stdin then blocks, and since the poll guard stays
+ * set until the callback fires, one hung child silently stops all future
+ * polling.
+ */
+function spawnClosedStdin(argv) {
+    const launcher = new Gio.SubprocessLauncher({
+        flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
+    });
+    launcher.set_stdin_file_path('/dev/null');
+    return launcher.spawnv(argv);
+}
+
 /* gnome-shell's PATH does not include ~/.local/bin, so resolve explicitly. */
 function claudeBinary() {
     const local = GLib.build_filenamev(
@@ -60,6 +76,7 @@ const TIGER_PANEL_ICON = 'network-server-symbolic';
 const CLAUDE_MARK = 'claude-symbolic.svg';
 const CLAUDE_POLL_SECONDS = 30;
 const USAGE_POLL_SECONDS = 300;
+const USAGE_TIMEOUT_SECONDS = 30;
 
 const TERMINAL = ['gnome-terminal', '--'];
 const TERMINAL_WITH_CWD = cwd =>
@@ -1172,10 +1189,9 @@ class TigerIndicator extends PanelMenu.Button {
         this._busy = true;
         let proc;
         try {
-            proc = Gio.Subprocess.new(
+            proc = spawnClosedStdin(
                 ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
-                    TIGER_HOST, remoteCommand()],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
+                    TIGER_HOST, remoteCommand()]);
         } catch {
             this._busy = false;
             this._render(null, false);
@@ -1342,10 +1358,9 @@ class TigerIndicator extends PanelMenu.Button {
         const before = prunableGb(this._lastReport);
         let proc;
         try {
-            proc = Gio.Subprocess.new(
+            proc = spawnClosedStdin(
                 ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
-                    TIGER_HOST, pruneCommand()],
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE);
+                    TIGER_HOST, pruneCommand()]);
         } catch (e) {
             this._pruning = false;
             this._refreshPrune();
@@ -1675,6 +1690,11 @@ class UsageIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._rowWeek);
         this.menu.addMenuItem(this._rowModel);
 
+        this._rowRefresh = new ActionRow('🔄', 'Last checked');
+        this._rowRefresh.setButton('Refresh', 'cnw-action');
+        this._rowRefresh.onClick(() => this._poll(true));
+        this.menu.addMenuItem(this._rowRefresh);
+
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
         this.menu.addMenuItem(sectionLabel('Resets'));
         this._rowSessionReset = new DetailRow('Session resets', '🔄');
@@ -1696,35 +1716,68 @@ class UsageIndicator extends PanelMenu.Button {
             });
     }
 
-    _poll() {
+    /**
+     * Run `claude -p /usage`.
+     *
+     * stdin must come from /dev/null. Gio.Subprocess otherwise inherits the
+     * shell's stdin, which never reaches EOF, so the CLI blocks waiting on it
+     * ("no stdin data received in 3s"). A poll that never returns leaves
+     * _busy set forever and silently kills every future poll -- which is how
+     * the indicator came to sit on hours-old figures.
+     *
+     * A watchdog clears that state even if the process wedges anyway.
+     */
+    _poll(manual = false) {
         if (this._busy)
             return;
         this._busy = true;
+        if (manual)
+            this._setRefreshBusy(true);
+
         let proc;
         try {
-            proc = Gio.Subprocess.new(usageCommand(claudeBinary()),
-                Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_SILENCE);
-        } catch {
-            this._busy = false;
-            this._render(null);
+            proc = spawnClosedStdin(usageCommand(claudeBinary()));
+        } catch (e) {
+            this._finishPoll(null, `could not start: ${e}`);
             return;
         }
         this._proc = proc;
+
+        this._watchdogId = GLib.timeout_add_seconds(
+            GLib.PRIORITY_DEFAULT, USAGE_TIMEOUT_SECONDS, () => {
+                this._watchdogId = null;
+                if (this._proc === proc) {
+                    try { proc.force_exit(); } catch { /* already gone */ }
+                    this._finishPoll(null, 'timed out');
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+
         proc.communicate_utf8_async(null, this._cancellable, (pr, res) => {
-            this._busy = false;
-            this._proc = null;
-            let out = '';
+            let out = '', err = '';
             try {
-                [, out] = pr.communicate_utf8_finish(res);
-            } catch {
-                if (!this._cancellable.is_cancelled())
-                    this._render(null);
-                return;
+                [, out, err] = pr.communicate_utf8_finish(res);
+            } catch (e) {
+                err = String(e);
             }
             if (this._cancellable.is_cancelled())
                 return;
-            this._render(parseUsage(out));
+            const parsed = parseUsage(out);
+            this._finishPoll(parsed.ok ? parsed : null,
+                parsed.ok ? null : (err || out || 'no output').trim().slice(0, 200));
         });
+    }
+
+    _finishPoll(parsed, problem) {
+        this._busy = false;
+        this._proc = null;
+        if (this._watchdogId) {
+            GLib.Source.remove(this._watchdogId);
+            this._watchdogId = null;
+        }
+        this._lastError = problem;
+        this._setRefreshBusy(false);
+        this._render(parsed);
     }
 
     _render(u) {
@@ -1788,6 +1841,9 @@ class UsageIndicator extends PanelMenu.Button {
         if (u?.model)
             this._rowModel.setKey(u.model.label.replace(/^Current /, ''));
 
+        if (u)
+            this._lastOk = Date.now();
+        this._updateFreshness();
         this._rowSessionReset.setValue(u?.session?.resets ?? '--', 'dim');
         this._rowWeekReset.setValue(u?.week?.resets ?? '--', 'dim');
 
@@ -1801,8 +1857,33 @@ class UsageIndicator extends PanelMenu.Button {
         }
     }
 
+    _setRefreshBusy(busy) {
+        if (!this._rowRefresh)
+            return;
+        this._rowRefresh.setButton(busy ? 'checking…' : 'Refresh',
+            busy ? 'cnw-action-busy' : 'cnw-action', !busy);
+    }
+
+    /** Make staleness visible rather than leaving old numbers looking live. */
+    _updateFreshness() {
+        if (!this._rowRefresh)
+            return;
+        if (this._lastError) {
+            this._rowRefresh.setKey(`Last check failed: ${this._lastError}`);
+            return;
+        }
+        if (!this._lastOk) {
+            this._rowRefresh.setKey('Not checked yet');
+            return;
+        }
+        const mins = Math.round((Date.now() - this._lastOk) / 60000);
+        this._rowRefresh.setKey(
+            mins < 1 ? 'Checked just now'
+                : `Checked ${mins} min${mins === 1 ? '' : 's'} ago`);
+    }
+
     destroy() {
-        for (const id of ['_timeoutId', '_saveId']) {
+        for (const id of ['_timeoutId', '_saveId', '_watchdogId']) {
             if (this[id]) {
                 GLib.Source.remove(this[id]);
                 this[id] = null;

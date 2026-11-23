@@ -289,3 +289,16 @@ others do. Swap `CLAUDE_MARK` in `extension.js` to use the colour variant.
 
 The `-symbolic` suffix is load-bearing: it is what makes St recolour the icon
 from CSS rather than rendering it as-is.
+
+### Subprocess stdin
+
+Every child is spawned with stdin pinned to `/dev/null`. `Gio.Subprocess`
+otherwise inherits gnome-shell's stdin, which never reaches EOF — the Claude
+CLI then blocks waiting on it ("no stdin data received in 3s"). Because the
+poll guard stays set until the callback fires, a single hung child silently
+stops *all* future polling, leaving the indicator showing hours-old figures
+with no error anywhere.
+
+The usage poll also has a 30 s watchdog that force-exits and clears the guard
+if a child wedges anyway, and the menu shows when it last checked plus the
+text of any failure. A **Refresh** button forces a check immediately.
