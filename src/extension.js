@@ -46,6 +46,23 @@ import {
  * set until the callback fires, one hung child silently stops all future
  * polling.
  */
+/**
+ * Defer an indicator's first render until after construction returns.
+ *
+ * addToStatusArea runs after the constructor, so anything that changes style
+ * classes inside _init does so on an actor with no allocation yet. GNOME logs
+ * "Can't update stage views actor ... needs an allocation / the offending
+ * signal was style-changed". An idle callback lets the actor be parented and
+ * allocated first.
+ */
+function deferFirstUpdate(indicator, fn) {
+    indicator._firstUpdateId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+        indicator._firstUpdateId = null;
+        fn();
+        return GLib.SOURCE_REMOVE;
+    });
+}
+
 function spawnClosedStdin(argv) {
     const launcher = new Gio.SubprocessLauncher({
         flags: Gio.SubprocessFlags.STDOUT_PIPE | Gio.SubprocessFlags.STDERR_PIPE,
@@ -605,7 +622,7 @@ class ThrottleIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._rowRange);
         this.menu.addMenuItem(this._rowSource);
 
-        this._update();
+        deferFirstUpdate(this, () => this._update());
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, POLL_SECONDS, () => {
                 this._update();
@@ -804,13 +821,11 @@ class ThrottleIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        if (this._timeoutId) {
-            GLib.Source.remove(this._timeoutId);
-            this._timeoutId = null;
-        }
-        if (this._saveId) {
-            GLib.Source.remove(this._saveId);
-            this._saveId = null;
+        for (const id of ['_timeoutId', '_saveId', '_firstUpdateId']) {
+            if (this[id]) {
+                GLib.Source.remove(this[id]);
+                this[id] = null;
+            }
         }
         saveSeries('cpu.json', this._series);
         super.destroy();
@@ -913,7 +928,7 @@ class NetIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._rowLoss);
         this.menu.addMenuItem(this._rowTargets);
 
-        this._probe();
+        deferFirstUpdate(this, () => this._probe());
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, NET_POLL_SECONDS, () => {
                 this._probe();
@@ -1058,13 +1073,11 @@ class NetIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        if (this._timeoutId) {
-            GLib.Source.remove(this._timeoutId);
-            this._timeoutId = null;
-        }
-        if (this._saveId) {
-            GLib.Source.remove(this._saveId);
-            this._saveId = null;
+        for (const id of ['_timeoutId', '_saveId', '_firstUpdateId']) {
+            if (this[id]) {
+                GLib.Source.remove(this[id]);
+                this[id] = null;
+            }
         }
         saveSeries('net.json', this._series);
         this._cancellable.cancel();
@@ -1169,7 +1182,7 @@ class TigerIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._previewLabel);
         this._previewItems = [];
 
-        this._poll();
+        deferFirstUpdate(this, () => this._poll());
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_DEFAULT, TIGER_POLL_SECONDS, () => {
                 this._poll();
@@ -1439,7 +1452,7 @@ class TigerIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        for (const id of ['_timeoutId', '_saveId', '_armId']) {
+        for (const id of ['_timeoutId', '_saveId', '_armId', '_firstUpdateId']) {
             if (this[id]) {
                 GLib.Source.remove(this[id]);
                 this[id] = null;
@@ -1521,7 +1534,7 @@ class ClaudeIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._rowTracked);
         this.menu.addMenuItem(this._rowAllTime);
 
-        this._update();
+        deferFirstUpdate(this, () => this._update());
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_LOW, CLAUDE_POLL_SECONDS, () => {
                 this._update();
@@ -1599,7 +1612,7 @@ class ClaudeIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        for (const id of ['_timeoutId', '_saveId']) {
+        for (const id of ['_timeoutId', '_saveId', '_firstUpdateId']) {
             if (this[id]) {
                 GLib.Source.remove(this[id]);
                 this[id] = null;
@@ -1702,7 +1715,7 @@ class UsageIndicator extends PanelMenu.Button {
         this.menu.addMenuItem(this._rowSessionReset);
         this.menu.addMenuItem(this._rowWeekReset);
 
-        this._poll();
+        deferFirstUpdate(this, () => this._poll());
         this._timeoutId = GLib.timeout_add_seconds(
             GLib.PRIORITY_LOW, USAGE_POLL_SECONDS, () => {
                 this._poll();
@@ -1883,7 +1896,7 @@ class UsageIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        for (const id of ['_timeoutId', '_saveId', '_watchdogId']) {
+        for (const id of ['_timeoutId', '_saveId', '_watchdogId', '_firstUpdateId']) {
             if (this[id]) {
                 GLib.Source.remove(this[id]);
                 this[id] = null;

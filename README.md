@@ -302,3 +302,16 @@ with no error anywhere.
 The usage poll also has a 30 s watchdog that force-exits and clears the guard
 if a child wedges anyway, and the menu shows when it last checked plus the
 text of any failure. A **Refresh** button forces a check immediately.
+
+### First render timing
+
+Each indicator defers its first update to an idle callback rather than
+running it inside `_init`. `addToStatusArea` happens *after* the constructor
+returns, so style-class changes made during construction act on an actor with
+no allocation yet, and GNOME logs:
+
+    Can't update stage views actor ... is on because it needs an allocation
+    The offending signal was style-changed on ...ThrottleIndicator
+
+The idle source is tracked and removed in `destroy()` like every other
+timeout, so a disable mid-startup cannot leave it dangling.
